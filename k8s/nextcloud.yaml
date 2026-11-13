@@ -124,8 +124,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: nextcloud
-  minReplicas: 1
-  maxReplicas: 3
+  minReplicas: 2
+  maxReplicas: 4
   metrics:
     - type: Resource
       resource:
@@ -160,3 +160,13 @@ spec:
               service:
                 name: nextcloud
                 port: {name: http}
+---
+# Kubernetes garde toujours au moins 1 pod Nextcloud prêt.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: nextcloud
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: nextcloud}
