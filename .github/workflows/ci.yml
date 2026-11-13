@@ -134,5 +134,5 @@ jobs:
       - name: Nextcloud répond
         run: |
           ssh "$DEPLOY_USER@$HOST" "kubectl -n nextcloud get pods,hpa"
-          # -k tant que le certificat est auto-signé (à retirer avec Let's Encrypt)
-          curl -fsSk "https://$HOST/status.php"
+          # certificat Let's Encrypt : curl vérifie qu'il est valide
+          curl -fsS "https://$HOST/status.php"
