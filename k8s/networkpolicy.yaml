@@ -58,3 +58,22 @@ spec:
       ports:
         - {port: 6379, protocol: TCP}
   egress: []
+---
+# 5) Let's Encrypt (HTTP-01) : cert-manager crée un pod "solver" temporaire dans ce
+#    namespace pour prouver qu'on contrôle le domaine. Traefik doit pouvoir le joindre.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: acme-solver-from-ingress}
+spec:
+  podSelector:
+    matchLabels:
+      acme.cert-manager.io/http01-solver: "true"
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: traefik}
+      ports:
+        - {port: 8089, protocol: TCP}
