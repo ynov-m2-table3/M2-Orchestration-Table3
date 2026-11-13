@@ -1,0 +1,38 @@
+# Test du HPA : 4 pods qui appellent Nextcloud en boucle (via le Service, dans le cluster).
+#   kubectl apply -f k8s/tests/load-generator.yaml
+#   kubectl -n nextcloud get hpa nextcloud -w     (dans un autre terminal)
+#   kubectl delete -f k8s/tests/load-generator.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-generator
+  namespace: nextcloud
+spec:
+  replicas: 4
+  selector:
+    matchLabels: {role: load-test}
+  template:
+    metadata:
+      labels: {role: load-test}      # autorisé par la NetworkPolicy nextcloud-from-ingress
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: load
+          image: busybox:1.37
+          command: ["sh", "-c"]
+          args:
+            - |
+              for i in 1 2 3 4 5; do
+                while true; do wget -q -O /dev/null --header "Host: localhost" http://nextcloud/status.php; done &
+              done
+              wait
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 50m, memory: 16Mi}
+            limits: {cpu: 200m, memory: 64Mi}

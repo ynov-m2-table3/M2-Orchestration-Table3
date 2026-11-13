@@ -1,0 +1,120 @@
+# Compose "app" -> Deployment + PVC + Service
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nextcloud-html     # = volume "nextcloud" du compose (/var/www/html)
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: {requests: {storage: 10Gi}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nextcloud-config
+data:
+  MYSQL_HOST: db
+  MYSQL_DATABASE: nextcloud
+  MYSQL_USER: nextcloud
+  NEXTCLOUD_ADMIN_USER: admin
+  REDIS_HOST: redis
+  REDIS_HOST_PORT: "6379"
+  OVERWRITEPROTOCOL: https
+  # réseau des pods k3s (Traefik est un pod) : remplace 172.30.0.0/24 du compose
+  TRUSTED_PROXIES: 10.42.0.0/16
+  PHP_MEMORY_LIMIT: 512M
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud
+  labels: {app: nextcloud}
+spec:
+  selector: {app: nextcloud}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextcloud
+spec:
+  replicas: 1                # ensuite piloté par le HPA (1 à 3)
+  selector:
+    matchLabels: {app: nextcloud}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  template:
+    metadata:
+      labels: {app: nextcloud, tier: frontend}
+    spec:
+      serviceAccountName: nextcloud
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33        # www-data : on démarre directement en www-data,
+        runAsGroup: 33       # donc plus besoin de chown/su au démarrage
+        fsGroup: 33
+        seccompProfile: {type: RuntimeDefault}
+        sysctls:
+          # autorise un utilisateur non-root à écouter sur le port 80 (Apache)
+          # sysctl "safe", limité au réseau du pod
+          - {name: net.ipv4.ip_unprivileged_port_start, value: "0"}
+      containers:
+        - name: nextcloud
+          image: nextcloud:33-apache
+          envFrom:
+            - configMapRef: {name: nextcloud-config}
+          env:
+            - name: NEXTCLOUD_DOMAIN
+              valueFrom:
+                configMapKeyRef: {name: nextcloud-domain, key: NEXTCLOUD_DOMAIN}
+            # localhost : pour les sondes (Host: localhost). Pris en compte à l'installation seulement.
+            - {name: NEXTCLOUD_TRUSTED_DOMAINS, value: "$(NEXTCLOUD_DOMAIN) localhost"}
+            - {name: MYSQL_PASSWORD_FILE, value: /run/secrets/db_password}
+            - {name: NEXTCLOUD_ADMIN_PASSWORD_FILE, value: /run/secrets/admin_password}
+            - name: REDIS_HOST_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: nextcloud-secrets, key: redis_password}
+          ports:
+            - {name: http, containerPort: 80}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}   # possible ici car on ne démarre plus en root
+          resources:
+            requests: {cpu: 200m, memory: 256Mi}   # le HPA calcule le % CPU sur ce request
+            limits: {cpu: "1", memory: 1Gi}
+          # la 1re installation prend ~1-2 min : la startupProbe laisse jusqu'à 10 min
+          startupProbe:
+            httpGet:
+              path: /status.php
+              port: http
+              httpHeaders: [{name: Host, value: localhost}]
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /status.php
+              port: http
+              httpHeaders: [{name: Host, value: localhost}]
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /status.php
+              port: http
+              httpHeaders: [{name: Host, value: localhost}]
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 5
+          volumeMounts:
+            - {name: html, mountPath: /var/www/html}
+            - {name: secrets, mountPath: /run/secrets, readOnly: true}
+      volumes:
+        - name: html
+          persistentVolumeClaim: {claimName: nextcloud-html}
+        - name: secrets
+          secret:
+            secretName: nextcloud-secrets
+            items:
+              - {key: db_password, path: db_password}
+              - {key: admin_password, path: admin_password}

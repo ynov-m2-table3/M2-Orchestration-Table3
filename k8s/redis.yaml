@@ -1,0 +1,60 @@
+# Ajout par rapport au compose : Redis (sessions + verrous de fichiers).
+# Indispensable dès qu'il y a plusieurs pods Nextcloud (HPA).
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  labels: {app: redis}
+spec:
+  selector: {app: redis}
+  ports:
+    - {name: redis, port: 6379, targetPort: redis}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: redis}
+  template:
+    metadata:
+      labels: {app: redis, tier: backend}
+    spec:
+      serviceAccountName: redis
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: redis
+          image: redis:7.4-alpine
+          # cache seulement : pas de persistance sur disque
+          args: ["--requirepass", "$(REDIS_PASSWORD)", "--save", "", "--appendonly", "no"]
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: nextcloud-secrets, key: redis_password}
+          ports:
+            - {name: redis, containerPort: 6379}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          readinessProbe:
+            tcpSocket: {port: redis}
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: {port: redis}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          volumeMounts:
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: data
+          emptyDir: {}

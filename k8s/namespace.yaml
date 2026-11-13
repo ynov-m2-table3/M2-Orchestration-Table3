@@ -1,0 +1,9 @@
+# Équivalent du "projet" compose : tout est isolé dans un namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nextcloud
+  labels:
+    # refuse tout pod root / privilégié dans le namespace (contrôle natif K8s)
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

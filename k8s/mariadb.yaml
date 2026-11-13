@@ -1,0 +1,74 @@
+# Compose "db" -> StatefulSet (identité stable mariadb-0 + son volume) + Service headless
+apiVersion: v1
+kind: Service
+metadata:
+  name: db            # même nom que dans le compose : MYSQL_HOST=db ne change pas
+  labels: {app: mariadb}
+spec:
+  clusterIP: None
+  selector: {app: mariadb}
+  ports:
+    - {name: mysql, port: 3306, targetPort: mysql}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mariadb
+spec:
+  serviceName: db
+  replicas: 1
+  selector:
+    matchLabels: {app: mariadb}
+  template:
+    metadata:
+      labels: {app: mariadb, tier: backend}
+    spec:
+      serviceAccountName: mariadb
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999      # utilisateur "mysql" de l'image
+        runAsGroup: 999
+        fsGroup: 999        # le volume appartient au groupe 999 -> mariadb peut écrire sans chown
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: mariadb
+          image: mariadb:11.4
+          args: ["--transaction-isolation=READ-COMMITTED"]
+          env:
+            - {name: MARIADB_DATABASE, value: nextcloud}
+            - {name: MARIADB_USER, value: nextcloud}
+            - {name: MARIADB_ROOT_PASSWORD_FILE, value: /run/secrets/db_root_password}
+            - {name: MARIADB_PASSWORD_FILE, value: /run/secrets/db_password}
+          ports:
+            - {name: mysql, containerPort: 3306}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 1Gi}
+          # même test que le healthcheck du compose
+          readinessProbe:
+            exec: {command: ["healthcheck.sh", "--connect", "--innodb_initialized"]}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            exec: {command: ["healthcheck.sh", "--connect"]}
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            failureThreshold: 5
+          volumeMounts:
+            - {name: data, mountPath: /var/lib/mysql}
+            - {name: secrets, mountPath: /run/secrets, readOnly: true}
+      volumes:
+        - name: secrets
+          secret:
+            secretName: nextcloud-secrets
+            items:
+              - {key: db_root_password, path: db_root_password}
+              - {key: db_password, path: db_password}
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        resources: {requests: {storage: 5Gi}}

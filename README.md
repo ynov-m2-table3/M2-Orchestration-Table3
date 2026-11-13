@@ -18,6 +18,10 @@ login `admin`, mdp dans `secrets/admin_password`
 
 Le premier démarrage prend ~1 min (install de nextcloud). Des 502 au début c'est normal, faut attendre.
 
+## Kubernetes
+
+Version Kubernetes (k3d) : voir [`k8s/README.md`](k8s/README.md) (lancement, mapping compose -> K8s, sécurité, HPA).
+
 ## Ce qu'il y a dans le compose
 
 - `proxy` : caddy, seul conteneur avec des ports ouverts (80/443)

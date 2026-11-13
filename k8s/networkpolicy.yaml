@@ -1,0 +1,60 @@
+# Équivalent des réseaux compose frontend / backend (internal: true)
+
+# 1) Par défaut : rien n'entre dans les pods du namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny-ingress}
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+# 2) Nextcloud : joignable uniquement depuis Traefik (et le générateur de charge du test HPA)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: nextcloud-from-ingress}
+spec:
+  podSelector:
+    matchLabels: {app: nextcloud}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: traefik}
+        - podSelector:
+            matchLabels: {role: load-test}
+      ports:
+        - {port: 80, protocol: TCP}
+---
+# 3) MariaDB : joignable uniquement par Nextcloud, et aucune sortie (= internal: true)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: mariadb-backend-only}
+spec:
+  podSelector:
+    matchLabels: {app: mariadb}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app: nextcloud}
+      ports:
+        - {port: 3306, protocol: TCP}
+  egress: []
+---
+# 4) Redis : idem
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: redis-backend-only}
+spec:
+  podSelector:
+    matchLabels: {app: redis}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app: nextcloud}
+      ports:
+        - {port: 6379, protocol: TCP}
+  egress: []

@@ -1,0 +1,49 @@
+# --- Comptes de service des applis : aucun accès à l'API Kubernetes ---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: nextcloud}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: mariadb}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: redis}
+automountServiceAccountToken: false
+---
+# --- RBAC minimal : un compte "deployer" (pour la CI) limité au namespace ---
+# Il peut mettre à jour les applis et lire leur état, mais pas lire les Secrets,
+# ni toucher au reste du cluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: deployer}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata: {name: deployer}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "services", "configmaps", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata: {name: deployer}
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: nextcloud
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: deployer

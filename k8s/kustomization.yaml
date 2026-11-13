@@ -1,0 +1,36 @@
+# kubectl apply -k k8s/   (après scripts/create-secrets.sh et scripts/create-tls.sh)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: nextcloud
+
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - mariadb.yaml
+  - redis.yaml
+  - nextcloud.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - networkpolicy.yaml
+
+# config.env -> ConfigMap "nextcloud-domain" (le nom reçoit un suffixe de hash :
+# changer le domaine => nouveau ConfigMap => redéploiement automatique des pods)
+configMapGenerator:
+  - name: nextcloud-domain
+    envs: [config.env]
+
+# Le domaine est écrit une seule fois (config.env) et recopié dans l'Ingress
+replacements:
+  - source:
+      kind: ConfigMap
+      name: nextcloud-domain
+      fieldPath: data.NEXTCLOUD_DOMAIN
+    targets:
+      - select: {kind: Ingress, name: nextcloud}
+        fieldPaths:
+          - spec.rules.0.host
+          - spec.tls.0.hosts.0
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: nextcloud

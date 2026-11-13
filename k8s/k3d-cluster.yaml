@@ -1,0 +1,16 @@
+# Cluster local k3d : 1 server + 2 agents (3 nœuds k3s dans des conteneurs Docker).
+# k3s fournit déjà : Traefik (Ingress), local-path (PVC), metrics-server (HPA),
+# et un contrôleur NetworkPolicy (kube-router).
+# Création : k3d cluster create --config k8s/k3d-cluster.yaml
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: table3
+servers: 1
+agents: 2
+ports:
+  # le loadbalancer k3d publie Traefik sur la VM (stopper le compose avant : mêmes ports)
+  - port: 80:80
+    nodeFilters: [loadbalancer]
+  - port: 443:443
+    nodeFilters: [loadbalancer]
