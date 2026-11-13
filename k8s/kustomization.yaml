@@ -10,11 +10,13 @@ resources:
   - nextcloud.yaml      # config, volume, Deployment, Service, HPA, Ingress
   - networkpolicy.yaml
 
-# config.env -> ConfigMap "nextcloud-domain" (le nom reçoit un suffixe de hash :
-# changer le domaine => nouveau ConfigMap => redéploiement automatique des pods)
+# config.env -> ConfigMap "nextcloud-domain"
+# (changer le domaine : kubectl -n nextcloud rollout restart deploy/nextcloud ensuite)
 configMapGenerator:
   - name: nextcloud-domain
     envs: [config.env]
+    # nom fixe (sans suffixe de hash) : la sonde et le test de charge le lisent aussi
+    options: {disableNameSuffixHash: true}
 
 # Le domaine est écrit une seule fois (config.env) et recopié dans l'Ingress
 replacements:

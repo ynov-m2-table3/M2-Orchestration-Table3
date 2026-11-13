@@ -27,7 +27,7 @@ jobs:
       - name: Validation des schémas (kubeconform)
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz | tar xz
-          ./kubeconform -strict -summary -kubernetes-version 1.31.0 rendered.yaml k8s/load-test.yaml
+          ./kubeconform -strict -summary -kubernetes-version 1.31.0 rendered.yaml k8s/load-test.yaml k8s/sonde.yaml
 
       - name: Manifests rendus (artefact)
         uses: actions/upload-artifact@v4  # TODO : épingler sur un SHA comme les autres actions

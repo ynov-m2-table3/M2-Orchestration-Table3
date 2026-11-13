@@ -100,6 +100,7 @@ else
     --set "grafana.ingress.hosts[0]=grafana.$DOMAIN" \
     --set "grafana.ingress.tls[0].hosts[0]=grafana.$DOMAIN" \
     --wait --timeout 10m
+  kubectl apply -f k8s/monitoring/traefik-podmonitor.yaml
   kubectl apply -f k8s/monitoring/dashboard-nextcloud.yaml
   echo "-> https://grafana.$DOMAIN  (login admin, mdp = GRAFANA_ADMIN_PASSWORD)"
 fi

@@ -19,8 +19,10 @@ Accès : https://ynov-orchestration-table3.duckdns.org · Grafana : https://graf
 | `deploy.sh` | installe cert-manager, crée les Secrets, applique les manifests, installe le monitoring |
 | `cert-manager/issuers.yaml` | émetteurs Let's Encrypt (staging + production) |
 | `monitoring/values.yaml` | réglages de Prometheus + Grafana (kube-prometheus-stack, version allégée) |
-| `monitoring/dashboard-nextcloud.yaml` | dashboard Grafana « Nextcloud - HPA et ressources » |
-| `load-test.yaml` | générateur de charge pour la démo du HPA |
+| `monitoring/dashboard-nextcloud.yaml` | dashboard Grafana « Nextcloud - HA et autoscaling » |
+| `monitoring/traefik-podmonitor.yaml` | Prometheus collecte aussi Traefik (requêtes, codes HTTP, latence) |
+| `sonde.yaml` | faux utilisateur : 2 requêtes/s via Traefik, logs OK / ERREUR (tests de panne) |
+| `load-test.yaml` | générateur de charge (via Traefik) pour la démo du HPA |
 
 ## Infra
 
@@ -228,9 +230,76 @@ Réglages pour k3d (`monitoring/values.yaml`) : pas d'Alertmanager, cibles etcd 
 
 Le namespace `monitoring` **n'a pas** le label Pod Security `restricted` : node-exporter a besoin d'accéder aux nœuds. Il est séparé du namespace applicatif, qui reste en `restricted`.
 
-**Dashboard du projet** : *Nextcloud - HPA et ressources* (dossier General). Pods actuels / voulus par le HPA, CPU moyen rapporté au request (ce que regarde le HPA, cible 60 %), CPU et mémoire par pod, redémarrages. Les dashboards Kubernetes fournis par le chart (« Kubernetes / Compute Resources / ... ») sont aussi disponibles.
+**Dashboard du projet** : *Nextcloud - HA et autoscaling* (dossier General), rafraîchi toutes les 5 s.
 
-Démo : ouvrir le dashboard, lancer `kubectl apply -f k8s/load-test.yaml`, et regarder le CPU dépasser 60 % puis les pods passer de 1 à 3.
+| Ligne | Ce qu'on y voit |
+|---|---|
+| 1. Le service vu par les utilisateurs | requêtes/s, % de réponses OK, latence p95, pods prêts ; codes HTTP renvoyés par Traefik (404/503 = coupure) |
+| 2. Autoscaling | CPU moyen / request avec la ligne des 60 % ; pods voulus / existants / prêts |
+| 3. Résilience | pods prêts par appli, redémarrages, nœuds Ready, pods par état et par nœud |
+| 4. Ressources | CPU et mémoire par pod, CPU et RAM de la VM |
+
+Des **marqueurs verticaux** s'affichent automatiquement : rouge = conteneur redémarré, orange = le HPA change le nombre de pods, violet = nœud NotReady.
+
+## Démos de résilience
+
+Préparation : ouvrir le dashboard, lancer la sonde et suivre ses logs.
+
+```bash
+kubectl apply -f k8s/sonde.yaml
+kubectl -n nextcloud logs -f deploy/sonde        # une ligne OK / ERREUR toutes les 0,5 s
+kubectl -n nextcloud get pods -o wide -w         # autre terminal : les pods et leur nœud
+```
+
+**A. Montée en charge (HPA)**
+
+```bash
+kubectl apply -f k8s/load-test.yaml
+# ... 2 à 4 min ...
+kubectl delete -f k8s/load-test.yaml
+```
+
+Attendu : req/s et CPU montent, le CPU dépasse 60 %, marqueur orange, pods voulus puis prêts passent de 1 à 2-3, la latence redescend. Après l'arrêt, retour à 1 pod au bout d'environ 2 min.
+
+**B. Pod supprimé avec 1 seul pod : coupure**
+
+```bash
+kubectl -n nextcloud delete pod -l app=nextcloud
+```
+
+Attendu : la sonde affiche des `ERREUR` pendant quelques dizaines de secondes, « Pods Nextcloud prêts » passe à 0, les codes 404/503 apparaissent, puis tout revient. **Avec 1 réplica, il n'y a pas de haute disponibilité.**
+
+**C. Pod supprimé avec 2 pods : aucune coupure**
+
+```bash
+kubectl -n nextcloud patch hpa nextcloud -p '{"spec":{"minReplicas":2}}'    # attendre 2 pods prêts
+kubectl -n nextcloud delete pod $(kubectl -n nextcloud get pod -l app=nextcloud -o name | head -1 | cut -d/ -f2)
+kubectl -n nextcloud patch hpa nextcloud -p '{"spec":{"minReplicas":1}}'    # remettre comme avant
+```
+
+Attendu : aucune `ERREUR` dans la sonde. Le Service n'envoie le trafic qu'aux pods prêts (readinessProbe), l'autre pod répond pendant que le remplaçant démarre.
+
+**D. Conteneur qui plante**
+
+```bash
+kubectl -n nextcloud exec deploy/nextcloud -- kill 1
+```
+
+Attendu : marqueur rouge, compteur de redémarrages +1. Le kubelet relance le conteneur dans le même pod.
+
+**E. Panne d'un nœud**
+
+```bash
+kubectl get pods -A -o wide | grep -E "nextcloud|mariadb|redis"     # repérer les nœuds
+docker stop k3d-table3-agent-1        # choisir le nœud voulu
+# ... observer ...
+docker start k3d-table3-agent-1
+```
+
+Attendu : « Nœuds Ready » passe à 2 (environ 40 s), marqueur violet. Au bout d'environ 5 min, Kubernetes déplace les pods sans volume (Redis) sur un autre nœud.
+**Limite du lab** : Nextcloud et MariaDB ont un volume `local-path`, attaché à un seul nœud. S'ils sont sur le nœud arrêté, ils ne peuvent pas repartir ailleurs et le service reste coupé jusqu'au retour du nœud. En production, un stockage répliqué (Longhorn, Ceph) leur permettrait de redémarrer sur un autre nœud.
+
+Fin des démos : `kubectl delete -f k8s/sonde.yaml`.
 
 Épingler la version du chart pour des déploiements reproductibles : `helm list -n monitoring` donne la version installée, à passer ensuite en `MONITORING_CHART_VERSION`.
 

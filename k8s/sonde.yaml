@@ -1,0 +1,49 @@
+# Sonde de disponibilité : 2 requêtes par seconde vers Nextcloud, via Traefik.
+# Sert de "faux utilisateur" pendant les tests de panne :
+#   - ses logs donnent la chronologie seconde par seconde (OK / ERREUR)
+#   - son trafic alimente les courbes "Le service vu par les utilisateurs" de Grafana
+#   kubectl apply -f k8s/sonde.yaml
+#   kubectl -n nextcloud logs -f deploy/sonde
+#   kubectl delete -f k8s/sonde.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sonde
+  namespace: nextcloud
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {role: sonde}
+  template:
+    metadata:
+      labels: {role: sonde}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: sonde
+          image: busybox:1.37
+          env:
+            - name: DOMAIN
+              valueFrom:
+                configMapKeyRef: {name: nextcloud-domain, key: NEXTCLOUD_DOMAIN}
+          command: ["sh", "-c"]
+          args:
+            - |
+              while true; do
+                if wget -q -T 2 -O /dev/null --header "Host: $DOMAIN" http://traefik.kube-system.svc.cluster.local/status.php; then
+                  echo "$(date +%T) OK"
+                else
+                  echo "$(date +%T) ERREUR"
+                fi
+                sleep 0.5
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 10m, memory: 8Mi}
+            limits: {cpu: 50m, memory: 32Mi}

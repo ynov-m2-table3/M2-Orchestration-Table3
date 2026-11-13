@@ -1,4 +1,5 @@
-# Test du HPA : 4 pods qui appellent Nextcloud en boucle (via le Service, dans le cluster).
+# Test du HPA : 4 pods qui appellent Nextcloud en boucle, en passant par Traefik
+# (comme de vrais utilisateurs : le trafic apparaît dans les métriques Traefik / Grafana).
 #   kubectl apply -f k8s/load-test.yaml
 #   kubectl -n nextcloud get hpa nextcloud -w     (dans un autre terminal)
 #   kubectl delete -f k8s/load-test.yaml
@@ -13,7 +14,7 @@ spec:
     matchLabels: {role: load-test}
   template:
     metadata:
-      labels: {role: load-test}      # autorisé par la NetworkPolicy nextcloud-from-ingress
+      labels: {role: load-test}
     spec:
       automountServiceAccountToken: false
       securityContext:
@@ -23,11 +24,17 @@ spec:
       containers:
         - name: load
           image: busybox:1.37
+          env:
+            - name: DOMAIN
+              valueFrom:
+                configMapKeyRef: {name: nextcloud-domain, key: NEXTCLOUD_DOMAIN}
           command: ["sh", "-c"]
           args:
             - |
               for i in 1 2 3 4 5; do
-                while true; do wget -q -O /dev/null --header "Host: localhost" http://nextcloud/status.php; done &
+                while true; do
+                  wget -q -O /dev/null --header "Host: $DOMAIN" http://traefik.kube-system.svc.cluster.local/status.php
+                done &
               done
               wait
           securityContext:

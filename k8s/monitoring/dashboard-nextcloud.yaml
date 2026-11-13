@@ -1,5 +1,7 @@
 # Dashboard Grafana du projet, chargé automatiquement par Grafana (label grafana_dashboard="1").
-# Pour le modifier : l'éditer dans Grafana, "Export > JSON", puis recoller le JSON ici.
+# Pensé pour les démos : test de charge (HPA), pod tué, conteneur qui plante, nœud arrêté.
+# Pour le modifier : l'éditer dans Grafana, "Save as", Dashboard settings > JSON Model,
+# puis recoller le JSON ici (garder "uid": "nextcloud-hpa").
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,25 +12,96 @@ metadata:
 data:
   nextcloud-hpa.json: |
     {
-      "title": "Nextcloud - HPA et ressources",
+      "title": "Nextcloud - HA et autoscaling",
       "uid": "nextcloud-hpa",
       "tags": [
         "nextcloud",
         "projet"
       ],
       "timezone": "browser",
-      "refresh": "10s",
+      "refresh": "5s",
       "time": {
-        "from": "now-30m",
+        "from": "now-15m",
         "to": "now"
       },
       "schemaVersion": 39,
       "editable": true,
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": {
+              "type": "grafana",
+              "uid": "-- Grafana --"
+            },
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          },
+          {
+            "name": "Redémarrage de conteneur",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "enable": true,
+            "iconColor": "red",
+            "expr": "changes(kube_pod_container_status_restarts_total{namespace=\"nextcloud\"}[1m]) > 0",
+            "step": "30s",
+            "titleFormat": "Redémarrage",
+            "textFormat": "{{pod}}",
+            "useValueForTime": false
+          },
+          {
+            "name": "HPA : changement du nombre de pods",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "enable": true,
+            "iconColor": "orange",
+            "expr": "changes(kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"nextcloud\",horizontalpodautoscaler=\"nextcloud\"}[1m]) > 0",
+            "step": "30s",
+            "titleFormat": "HPA",
+            "textFormat": "nouveau nombre de pods voulu",
+            "useValueForTime": false
+          },
+          {
+            "name": "Nœud non prêt",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "prometheus"
+            },
+            "enable": true,
+            "iconColor": "purple",
+            "expr": "kube_node_status_condition{condition=\"Ready\",status=\"true\"} == 0",
+            "step": "30s",
+            "titleFormat": "Nœud NotReady",
+            "textFormat": "{{node}}",
+            "useValueForTime": false
+          }
+        ]
+      },
       "panels": [
         {
           "id": 1,
+          "type": "row",
+          "title": "1. Le service vu par les utilisateurs (via Traefik)",
+          "collapsed": false,
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 24,
+            "h": 1
+          },
+          "panels": []
+        },
+        {
+          "id": 2,
           "type": "stat",
-          "title": "Pods Nextcloud (actuels)",
+          "title": "Requêtes / s",
           "description": "",
           "datasource": {
             "type": "prometheus",
@@ -36,7 +109,7 @@ data:
           },
           "gridPos": {
             "x": 0,
-            "y": 0,
+            "y": 1,
             "w": 6,
             "h": 4
           },
@@ -47,7 +120,8 @@ data:
                 "uid": "prometheus"
               },
               "refId": "A",
-              "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"nextcloud\",horizontalpodautoscaler=\"nextcloud\"}"
+              "expr": "sum(rate(traefik_service_requests_total{service=~\"nextcloud-nextcloud-.*\"}[1m]))",
+              "legendFormat": ""
             }
           ],
           "options": {
@@ -56,65 +130,39 @@ data:
                 "lastNotNull"
               ]
             },
-            "colorMode": "value",
-            "graphMode": "area"
+            "colorMode": "background",
+            "graphMode": "area",
+            "textMode": "value"
           },
           "fieldConfig": {
-            "defaults": {},
-            "overrides": []
-          }
-        },
-        {
-          "id": 2,
-          "type": "stat",
-          "title": "Pods voulus par le HPA",
-          "description": "",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "gridPos": {
-            "x": 6,
-            "y": 0,
-            "w": 6,
-            "h": 4
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-              },
-              "refId": "A",
-              "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"nextcloud\",horizontalpodautoscaler=\"nextcloud\"}"
-            }
-          ],
-          "options": {
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
+            "defaults": {
+              "unit": "reqps",
+              "decimals": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "blue",
+                    "value": null
+                  }
+                ]
+              }
             },
-            "colorMode": "value",
-            "graphMode": "area"
-          },
-          "fieldConfig": {
-            "defaults": {},
             "overrides": []
           }
         },
         {
           "id": 3,
           "type": "stat",
-          "title": "CPU moyen / request",
-          "description": "Ce que regarde le HPA : CPU consommé / CPU demandé (request 200m). Cible : 60 %.",
+          "title": "Réponses OK (5 min)",
+          "description": "Part des réponses qui ne sont pas des erreurs serveur (5xx).",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
           "gridPos": {
-            "x": 12,
-            "y": 0,
+            "x": 6,
+            "y": 1,
             "w": 6,
             "h": 4
           },
@@ -125,7 +173,8 @@ data:
                 "uid": "prometheus"
               },
               "refId": "A",
-              "expr": "100 * sum(rate(container_cpu_usage_seconds_total{namespace=\"nextcloud\",container=\"nextcloud\"}[2m])) / sum(kube_pod_container_resource_requests{namespace=\"nextcloud\",container=\"nextcloud\",resource=\"cpu\"})"
+              "expr": "100 * sum(rate(traefik_service_requests_total{service=~\"nextcloud-nextcloud-.*\",code!~\"5..\"}[5m])) / sum(rate(traefik_service_requests_total{service=~\"nextcloud-nextcloud-.*\"}[5m]))",
+              "legendFormat": ""
             }
           ],
           "options": {
@@ -134,12 +183,31 @@ data:
                 "lastNotNull"
               ]
             },
-            "colorMode": "value",
-            "graphMode": "area"
+            "colorMode": "background",
+            "graphMode": "area",
+            "textMode": "value"
           },
           "fieldConfig": {
             "defaults": {
-              "unit": "percent"
+              "unit": "percent",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 95
+                  },
+                  {
+                    "color": "green",
+                    "value": 99
+                  }
+                ]
+              }
             },
             "overrides": []
           }
@@ -147,15 +215,15 @@ data:
         {
           "id": 4,
           "type": "stat",
-          "title": "Redémarrages de conteneurs (1 h)",
-          "description": "",
+          "title": "Latence p95",
+          "description": "95 % des requêtes répondent plus vite que cette valeur.",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
           "gridPos": {
-            "x": 18,
-            "y": 0,
+            "x": 12,
+            "y": 1,
             "w": 6,
             "h": 4
           },
@@ -166,7 +234,8 @@ data:
                 "uid": "prometheus"
               },
               "refId": "A",
-              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"nextcloud\"}[1h]))"
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{service=~\"nextcloud-nextcloud-.*\"}[2m])))",
+              "legendFormat": ""
             }
           ],
           "options": {
@@ -175,28 +244,49 @@ data:
                 "lastNotNull"
               ]
             },
-            "colorMode": "value",
-            "graphMode": "area"
+            "colorMode": "background",
+            "graphMode": "area",
+            "textMode": "value"
           },
           "fieldConfig": {
-            "defaults": {},
+            "defaults": {
+              "unit": "s",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
             "overrides": []
           }
         },
         {
           "id": 5,
-          "type": "timeseries",
-          "title": "HPA : nombre de pods",
-          "description": "Pendant le test de charge (k8s/load-test.yaml), la courbe 'voulus' monte, puis 'actuels' suit.",
+          "type": "stat",
+          "title": "Pods Nextcloud prêts",
+          "description": "0 = plus aucun pod pour répondre : coupure.",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
           "gridPos": {
-            "x": 0,
-            "y": 4,
-            "w": 12,
-            "h": 9
+            "x": 18,
+            "y": 1,
+            "w": 6,
+            "h": 4
           },
           "targets": [
             {
@@ -205,61 +295,173 @@ data:
                 "uid": "prometheus"
               },
               "refId": "A",
-              "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"nextcloud\",horizontalpodautoscaler=\"nextcloud\"}",
-              "legendFormat": "actuels"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-              },
-              "refId": "B",
-              "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"nextcloud\",horizontalpodautoscaler=\"nextcloud\"}",
-              "legendFormat": "voulus"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-              },
-              "refId": "C",
-              "expr": "kube_horizontalpodautoscaler_spec_max_replicas{namespace=\"nextcloud\",horizontalpodautoscaler=\"nextcloud\"}",
-              "legendFormat": "max"
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "prometheus"
-              },
-              "refId": "D",
-              "expr": "kube_horizontalpodautoscaler_spec_min_replicas{namespace=\"nextcloud\",horizontalpodautoscaler=\"nextcloud\"}",
-              "legendFormat": "min"
+              "expr": "sum(kube_pod_container_status_ready{namespace=\"nextcloud\",container=\"nextcloud\"})",
+              "legendFormat": ""
             }
           ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "colorMode": "background",
+            "graphMode": "area",
+            "textMode": "value"
+          },
           "fieldConfig": {
             "defaults": {
-              "custom": {
-                "lineWidth": 2,
-                "fillOpacity": 10
-              },
-              "decimals": 0
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
             },
             "overrides": []
+          }
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Réponses par code HTTP (tous sites, point d'entrée Traefik)",
+          "description": "Quand Nextcloud n'a plus de pod prêt, Traefik répond lui-même 404/503 : les erreurs apparaissent ici.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
           },
+          "gridPos": {
+            "x": 0,
+            "y": 5,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (code) (rate(traefik_entrypoint_requests_total{entrypoint=~\"web|websecure\"}[1m]))",
+              "legendFormat": "{{code}}"
+            }
+          ],
           "options": {
             "legend": {
               "displayMode": "list",
               "placement": "bottom"
             },
             "tooltip": {
-              "mode": "multi"
+              "mode": "multi",
+              "sort": "desc"
             }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 25,
+                "drawStyle": "line",
+                "spanNulls": false,
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                }
+              },
+              "unit": "reqps"
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "200"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "green"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "404"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "orange"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "502"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "503"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "504"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "dark-red"
+                    }
+                  }
+                ]
+              }
+            ]
           }
         },
         {
-          "id": 6,
+          "id": 7,
           "type": "timeseries",
-          "title": "CPU moyen des pods / request (cible HPA 60 %)",
+          "title": "Latence Nextcloud",
           "description": "",
           "datasource": {
             "type": "prometheus",
@@ -267,9 +469,80 @@ data:
           },
           "gridPos": {
             "x": 12,
-            "y": 4,
+            "y": 5,
             "w": 12,
-            "h": 9
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{service=~\"nextcloud-nextcloud-.*\"}[2m])))",
+              "legendFormat": "médiane"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "B",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(traefik_service_request_duration_seconds_bucket{service=~\"nextcloud-nextcloud-.*\"}[2m])))",
+              "legendFormat": "p95"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "drawStyle": "line",
+                "spanNulls": false
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 8,
+          "type": "row",
+          "title": "2. Autoscaling (HPA)",
+          "collapsed": false,
+          "gridPos": {
+            "x": 0,
+            "y": 13,
+            "w": 24,
+            "h": 1
+          },
+          "panels": []
+        },
+        {
+          "id": 9,
+          "type": "timeseries",
+          "title": "CPU moyen / request (cible du HPA : 60 %)",
+          "description": "Ce que regarde le HPA. Au-dessus de 60 %, il ajoute des pods.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 14,
+            "w": 12,
+            "h": 8
           },
           "targets": [
             {
@@ -280,6 +553,71 @@ data:
               "refId": "A",
               "expr": "100 * sum(rate(container_cpu_usage_seconds_total{namespace=\"nextcloud\",container=\"nextcloud\"}[2m])) / sum(kube_pod_container_resource_requests{namespace=\"nextcloud\",container=\"nextcloud\",resource=\"cpu\"})",
               "legendFormat": "CPU / request"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "drawStyle": "line",
+                "spanNulls": false,
+                "thresholdsStyle": {
+                  "mode": "line+area"
+                }
+              },
+              "unit": "percent",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 60
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 10,
+          "type": "timeseries",
+          "title": "Nombre de pods Nextcloud",
+          "description": "'voulus' monte d'abord, puis 'existants', puis 'prêts' une fois les sondes passées.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 14,
+            "w": 12,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"nextcloud\",horizontalpodautoscaler=\"nextcloud\"}",
+              "legendFormat": "voulus par le HPA"
             },
             {
               "datasource": {
@@ -287,32 +625,458 @@ data:
                 "uid": "prometheus"
               },
               "refId": "B",
-              "expr": "vector(60)",
-              "legendFormat": "cible HPA"
+              "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"nextcloud\",horizontalpodautoscaler=\"nextcloud\"}",
+              "legendFormat": "existants"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "C",
+              "expr": "sum(kube_pod_container_status_ready{namespace=\"nextcloud\",container=\"nextcloud\"})",
+              "legendFormat": "prêts"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "D",
+              "expr": "kube_horizontalpodautoscaler_spec_max_replicas{namespace=\"nextcloud\",horizontalpodautoscaler=\"nextcloud\"}",
+              "legendFormat": "max"
             }
           ],
-          "fieldConfig": {
-            "defaults": {
-              "custom": {
-                "lineWidth": 2,
-                "fillOpacity": 10
-              },
-              "unit": "percent"
-            },
-            "overrides": []
-          },
           "options": {
             "legend": {
               "displayMode": "list",
               "placement": "bottom"
             },
             "tooltip": {
-              "mode": "multi"
+              "mode": "multi",
+              "sort": "desc"
             }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "drawStyle": "line",
+                "spanNulls": false
+              },
+              "decimals": 0
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "max"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              }
+            ]
           }
         },
         {
-          "id": 7,
+          "id": 11,
+          "type": "row",
+          "title": "3. Résilience : pods, redémarrages, nœuds",
+          "collapsed": false,
+          "gridPos": {
+            "x": 0,
+            "y": 22,
+            "w": 24,
+            "h": 1
+          },
+          "panels": []
+        },
+        {
+          "id": 12,
+          "type": "timeseries",
+          "title": "Pods prêts par application",
+          "description": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 23,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (deployment) (kube_deployment_status_replicas_ready{namespace=\"nextcloud\"})",
+              "legendFormat": "{{deployment}}"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "B",
+              "expr": "sum by (statefulset) (kube_statefulset_status_replicas_ready{namespace=\"nextcloud\"})",
+              "legendFormat": "{{statefulset}}"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "drawStyle": "line",
+                "spanNulls": false
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 13,
+          "type": "timeseries",
+          "title": "Redémarrages de conteneurs (sur 5 min)",
+          "description": "Un conteneur qui plante ou dont la livenessProbe échoue est redémarré par le kubelet.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 8,
+            "y": 23,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace=\"nextcloud\"}[5m]))",
+              "legendFormat": "{{pod}}"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "drawStyle": "bars",
+                "spanNulls": false
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 14,
+          "type": "timeseries",
+          "title": "Nœuds Ready",
+          "description": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 16,
+            "y": 23,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum(kube_node_status_condition{condition=\"Ready\",status=\"true\"})",
+              "legendFormat": "Ready"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "B",
+              "expr": "count(kube_node_info)",
+              "legendFormat": "total"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "drawStyle": "line",
+                "spanNulls": false
+              },
+              "decimals": 0
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Ready"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "green"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "total"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "blue"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 15,
+          "type": "timeseries",
+          "title": "Pods du namespace par état",
+          "description": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 31,
+            "w": 12,
+            "h": 7
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (phase) (kube_pod_status_phase{namespace=\"nextcloud\"} == 1)",
+              "legendFormat": "{{phase}}"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 25,
+                "drawStyle": "line",
+                "spanNulls": false,
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                }
+              },
+              "decimals": 0
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Running"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "green"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Pending"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "orange"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Failed"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "red"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Succeeded"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "blue"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 16,
+          "type": "timeseries",
+          "title": "Sur quel nœud tourne chaque pod",
+          "description": "Pendant une panne de nœud, les pods quittent le nœud arrêté (au bout de ~5 min).",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 12,
+            "y": 31,
+            "w": 12,
+            "h": 7
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "sum by (node) (kube_pod_info{namespace=\"nextcloud\",created_by_kind!=\"Job\"})",
+              "legendFormat": "{{node}}"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 25,
+                "drawStyle": "line",
+                "spanNulls": false,
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                }
+              },
+              "decimals": 0
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 17,
+          "type": "row",
+          "title": "4. Ressources",
+          "collapsed": false,
+          "gridPos": {
+            "x": 0,
+            "y": 38,
+            "w": 24,
+            "h": 1
+          },
+          "panels": []
+        },
+        {
+          "id": 18,
           "type": "timeseries",
           "title": "CPU par pod Nextcloud",
           "description": "",
@@ -322,8 +1086,8 @@ data:
           },
           "gridPos": {
             "x": 0,
-            "y": 13,
-            "w": 12,
+            "y": 39,
+            "w": 8,
             "h": 8
           },
           "targets": [
@@ -337,39 +1101,42 @@ data:
               "legendFormat": "{{pod}}"
             }
           ],
-          "fieldConfig": {
-            "defaults": {
-              "custom": {
-                "lineWidth": 2,
-                "fillOpacity": 10
-              },
-              "unit": "cores"
-            },
-            "overrides": []
-          },
           "options": {
             "legend": {
               "displayMode": "list",
               "placement": "bottom"
             },
             "tooltip": {
-              "mode": "multi"
+              "mode": "multi",
+              "sort": "desc"
             }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "drawStyle": "line",
+                "spanNulls": false
+              },
+              "unit": "cores"
+            },
+            "overrides": []
           }
         },
         {
-          "id": 8,
+          "id": 19,
           "type": "timeseries",
-          "title": "Mémoire par pod (namespace nextcloud)",
+          "title": "Mémoire par pod",
           "description": "",
           "datasource": {
             "type": "prometheus",
             "uid": "prometheus"
           },
           "gridPos": {
-            "x": 12,
-            "y": 13,
-            "w": 12,
+            "x": 8,
+            "y": 39,
+            "w": 8,
             "h": 8
           },
           "targets": [
@@ -383,24 +1150,85 @@ data:
               "legendFormat": "{{pod}}"
             }
           ],
-          "fieldConfig": {
-            "defaults": {
-              "custom": {
-                "lineWidth": 2,
-                "fillOpacity": 10
-              },
-              "unit": "bytes"
-            },
-            "overrides": []
-          },
           "options": {
             "legend": {
               "displayMode": "list",
               "placement": "bottom"
             },
             "tooltip": {
-              "mode": "multi"
+              "mode": "multi",
+              "sort": "desc"
             }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "drawStyle": "line",
+                "spanNulls": false
+              },
+              "unit": "bytes"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 20,
+          "type": "timeseries",
+          "title": "VM : CPU et RAM utilisés",
+          "description": "k3d : les 3 nœuds sont des conteneurs sur la même VM, ces chiffres sont ceux de la VM.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "gridPos": {
+            "x": 16,
+            "y": 39,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "A",
+              "expr": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[2m])))",
+              "legendFormat": "CPU"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "refId": "B",
+              "expr": "100 * (1 - max(node_memory_MemAvailable_bytes) / max(node_memory_MemTotal_bytes))",
+              "legendFormat": "RAM"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "drawStyle": "line",
+                "spanNulls": false
+              },
+              "unit": "percent"
+            },
+            "overrides": []
           }
         }
       ]

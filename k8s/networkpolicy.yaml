@@ -8,7 +8,8 @@ spec:
   podSelector: {}
   policyTypes: [Ingress]
 ---
-# 2) Nextcloud : joignable uniquement depuis Traefik (et le générateur de charge du test HPA)
+# 2) Nextcloud : joignable uniquement depuis Traefik
+#    (la sonde et le test de charge passent eux aussi par Traefik, comme de vrais utilisateurs)
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata: {name: nextcloud-from-ingress}
@@ -22,8 +23,6 @@ spec:
             matchLabels: {kubernetes.io/metadata.name: kube-system}
           podSelector:
             matchLabels: {app.kubernetes.io/name: traefik}
-        - podSelector:
-            matchLabels: {role: load-test}
       ports:
         - {port: 8080, protocol: TCP}   # port du conteneur (le Service, lui, expose 80)
 ---
