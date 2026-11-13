@@ -120,19 +120,20 @@ jobs:
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           IMAGE_REPO: ${{ needs.image.outputs.repo }}
           IMAGE_TAG: ${{ needs.image.outputs.sha }}
         run: |
           # Les mots de passe passent par l'entrée standard de ssh (jamais dans la ligne de commande
           # ni dans les logs) et vont dans un fichier temporaire, supprimé juste après le déploiement.
-          printf 'DB_ROOT_PASSWORD=%s\nDB_PASSWORD=%s\nADMIN_PASSWORD=%s\nREDIS_PASSWORD=%s\n' \
-            "$DB_ROOT_PASSWORD" "$DB_PASSWORD" "$ADMIN_PASSWORD" "$REDIS_PASSWORD" \
+          printf 'DB_ROOT_PASSWORD=%s\nDB_PASSWORD=%s\nADMIN_PASSWORD=%s\nREDIS_PASSWORD=%s\nGRAFANA_ADMIN_PASSWORD=%s\n' \
+            "$DB_ROOT_PASSWORD" "$DB_PASSWORD" "$ADMIN_PASSWORD" "$REDIS_PASSWORD" "$GRAFANA_ADMIN_PASSWORD" \
           | ssh "$DEPLOY_USER@$HOST" "cd $APP_DIR && git pull --ff-only && umask 077 && cat > .env.ci \
               && ENV_FILE=.env.ci IMAGE_REPO=$IMAGE_REPO IMAGE_TAG=$IMAGE_TAG sh k8s/deploy.sh; \
               rc=\$?; rm -f .env.ci; exit \$rc"
 
       - name: Nextcloud répond
         run: |
-          ssh "$DEPLOY_USER@$HOST" "kubectl -n nextcloud get pods,hpa"
+          ssh "$DEPLOY_USER@$HOST" "kubectl -n nextcloud get pods,hpa && kubectl -n monitoring get pods"
           # certificat Let's Encrypt : curl vérifie qu'il est valide
           curl -fsS "https://$HOST/status.php"

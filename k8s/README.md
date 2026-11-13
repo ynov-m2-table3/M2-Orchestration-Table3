@@ -1,7 +1,7 @@
 # Nextcloud sur Kubernetes (k3d)
 
 Nextcloud 33 + MariaDB 11.4 + Redis, sur un cluster k3d qui tourne sur la VM Azure.
-Accès : https://ynov-orchestration-table3.duckdns.org
+Accès : https://ynov-orchestration-table3.duckdns.org · Grafana : https://grafana.ynov-orchestration-table3.duckdns.org
 
 ## Fichiers
 
@@ -16,7 +16,10 @@ Accès : https://ynov-orchestration-table3.duckdns.org
 | `redis.yaml` | cache sessions / verrous |
 | `nextcloud.yaml` | config, volume, Deployment, Service, HPA, Ingress |
 | `networkpolicy.yaml` | cloisonnement réseau |
-| `deploy.sh` | crée les Secrets puis applique le tout |
+| `deploy.sh` | installe cert-manager, crée les Secrets, applique les manifests, installe le monitoring |
+| `cert-manager/issuers.yaml` | émetteurs Let's Encrypt (staging + production) |
+| `monitoring/values.yaml` | réglages de Prometheus + Grafana (kube-prometheus-stack, version allégée) |
+| `monitoring/dashboard-nextcloud.yaml` | dashboard Grafana « Nextcloud - HPA et ressources » |
 | `load-test.yaml` | générateur de charge pour la démo du HPA |
 
 ## Infra
@@ -59,6 +62,7 @@ Internet ──► VM Azure :443 ──► loadbalancer k3d ──► Traefik (I
 curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | sudo bash
 sudo curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/$(curl -fsSL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 sudo chmod +x /usr/local/bin/kubectl
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | sudo bash   # pour le monitoring
 
 # 2. cluster (sans sudo : la config kubectl va dans ~/.kube de l'utilisateur)
 k3d cluster create --config k8s/k3d-cluster.yaml
@@ -85,6 +89,7 @@ Si la CI utilise un autre utilisateur ou un autre dossier, renseigner les variab
 |---|---|
 | `DB_ROOT_PASSWORD`, `DB_PASSWORD`, `ADMIN_PASSWORD` | mots de passe MariaDB et admin Nextcloud |
 | `REDIS_PASSWORD` | optionnel : généré au premier déploiement s'il est absent |
+| `GRAFANA_ADMIN_PASSWORD` | mot de passe `admin` de Grafana ; s'il est absent, le monitoring n'est pas installé |
 | `SSH_PRIVATE_KEY_MATHIAS` + variable `SSH_KNOWN_HOSTS` | connexion SSH à la VM (déjà en place) |
 
 **Image publique sur ghcr.io.** Après le premier passage de la CI, l'image apparaît dans *Packages* (profil ou organisation GitHub). La passer en **public** (*Package settings > Change visibility*), sinon k3d ne peut pas la télécharger (`ImagePullBackOff`).
@@ -95,7 +100,7 @@ Si la CI utilise un autre utilisateur ou un autre dossier, renseigner les variab
 
 1. `manifests` : rendu kustomize + validation des schémas (kubeconform)
 2. `image` : build de `image/Dockerfile` -> scan Trivy -> push `ghcr.io/<owner>/nextcloud-table3:sha-<commit>` et `:<version>`
-3. `deploy` : SSH sur la VM -> `git pull` -> `k8s/deploy.sh` avec l'image du commit -> test de `status.php`
+3. `deploy` : SSH sur la VM -> `git pull` -> `k8s/deploy.sh` avec l'image du commit -> test de `status.php` (le certificat doit être valide)
 
 Les mots de passe passent des secrets GitHub à la VM par l'entrée standard de `ssh`, dans un fichier temporaire (`.env.ci`) supprimé juste après. Ils n'apparaissent ni dans le dépôt, ni dans les logs, ni sur la ligne de commande.
 
@@ -129,7 +134,7 @@ Les labels OCI de l'image contiennent le commit et la date de build : `docker in
 | Docker Compose | Kubernetes | Fichier |
 |---|---|---|
 | projet compose | `Namespace nextcloud` | namespace.yaml |
-| service `proxy` (Caddy, ports 80/443) | `Ingress` servi par **Traefik** (inclus dans k3s) + Secret TLS | nextcloud.yaml, deploy.sh |
+| service `proxy` (Caddy, ports 80/443) | `Ingress` servi par **Traefik** (inclus dans k3s) + certificat Let's Encrypt (cert-manager) | nextcloud.yaml, cert-manager/issuers.yaml |
 | service `app` (`nextcloud:33-apache`) | `Deployment nextcloud` (image du projet) + `Service nextcloud` | nextcloud.yaml, image/Dockerfile |
 | service `db` | `StatefulSet mariadb` + `Service db` (headless) | mariadb.yaml |
 | — | `Deployment redis` + `Service redis` | redis.yaml |
@@ -153,7 +158,7 @@ Ici, on les démarre **directement** avec le bon utilisateur (`runAsUser: 33` = 
 
 **Pod Security `restricted` sur le namespace.** Kubernetes refuse tout pod root, privilégié, ou sans profil seccomp. Test : `kubectl -n nextcloud run test --image=nginx` est refusé.
 
-**Secrets.** Ils restent hors du dépôt : secrets GitHub pour la CI, `.env` gitignoré pour un déploiement à la main. `deploy.sh` les met dans un Secret Kubernetes, monté en fichiers. Le mot de passe Redis est le seul passé en variable d'environnement (limite de l'image).
+**Secrets.** Ils restent hors du dépôt : secrets GitHub pour la CI, `.env` gitignoré pour un déploiement à la main. Le mot de passe Grafana suit le même chemin (Secret `grafana-admin`). `deploy.sh` les met dans un Secret Kubernetes, monté en fichiers. Le mot de passe Redis est le seul passé en variable d'environnement (limite de l'image).
 
 **RBAC.**
 - Les comptes de service des applis ont `automountServiceAccountToken: false` : aucun accès à l'API Kubernetes.
@@ -169,6 +174,7 @@ kubectl auth can-i get pods -n default --as=$SA              # no
 **NetworkPolicy.**
 - Par défaut, rien n'entre dans le namespace.
 - Nextcloud n'est joignable que par Traefik (et par le générateur de charge).
+- Le pod « solver » de Let's Encrypt n'est joignable que par Traefik, sur le port 8089.
 - MariaDB et Redis ne sont joignables que par Nextcloud, et n'ont aucune sortie.
 
 ```bash
@@ -193,29 +199,40 @@ La VM est burstable (série B) : éviter d'enchaîner les tests de charge juste 
 
 **Pourquoi ça marche avec un PVC RWO :** le volume `local-path` est attaché à un nœud. Kubernetes place donc tous les pods Nextcloud sur ce nœud, où ils partagent le même dossier. Dans un vrai cluster, il faudrait un volume RWX (NFS, CephFS) ou un stockage objet S3.
 
-## Option : vrai certificat Let's Encrypt
+## Certificats : Let's Encrypt via cert-manager
 
-Le domaine DuckDNS pointe vers la VM, donc cert-manager peut obtenir un vrai certificat :
+`deploy.sh` installe cert-manager (s'il manque) et les deux émetteurs de `cert-manager/issuers.yaml`.
+L'Ingress porte l'annotation `cert-manager.io/cluster-issuer: letsencrypt` : cert-manager demande le certificat, le range dans le Secret `nextcloud-tls` et le renouvelle seul (validité 90 jours).
+
+Validation **HTTP-01** : Let's Encrypt appelle `http://<domaine>/.well-known/acme-challenge/...`, servi par un pod « solver » temporaire que cert-manager crée dans le namespace. La NetworkPolicy « tout refuser » le bloquait (erreur 502) : la règle `acme-solver-from-ingress` ouvre seulement Traefik -> solver, port 8089.
+
+Pour tester un changement sans risquer la limite de Let's Encrypt (5 échecs/heure), passer temporairement l'annotation à `letsencrypt-staging`.
 
 ```bash
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.21.3/cert-manager.yaml
-kubectl -n cert-manager rollout status deploy/cert-manager-webhook
-cat <<EOF | kubectl apply -f -
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata: {name: letsencrypt-staging}
-spec:
-  acme:
-    server: https://acme-staging-v02.api.letsencrypt.org/directory
-    privateKeySecretRef: {name: letsencrypt-staging}
-    solvers:
-      - http01: {ingress: {ingressClassName: traefik}}
-EOF
-kubectl -n nextcloud annotate ingress nextcloud cert-manager.io/cluster-issuer=letsencrypt-staging --overwrite
-kubectl -n nextcloud get certificate -w
+kubectl -n nextcloud get certificate,certificaterequest,challenges
+echo | openssl s_client -connect <domaine>:443 -servername <domaine> 2>/dev/null | openssl x509 -noout -issuer -dates
 ```
 
-Toujours tester en **staging** d'abord : Let's Encrypt bloque après 5 échecs par heure. Ensuite, créer le même ClusterIssuer avec l'URL de production (`https://acme-v02.api.letsencrypt.org/directory`), et mettre l'annotation dans `nextcloud.yaml` pour qu'elle survive au prochain déploiement.
+## Monitoring : Prometheus + Grafana
+
+Installé par `deploy.sh` avec Helm (chart `kube-prometheus-stack`), dans le namespace `monitoring`, si `helm` est présent sur la VM et si `GRAFANA_ADMIN_PASSWORD` est fourni.
+
+| Composant | Rôle |
+|---|---|
+| Prometheus | collecte les métriques toutes les 30 s, gardées 3 jours (PVC 5 Gi) |
+| Grafana | dashboards, sur `https://grafana.<domaine>` (Let's Encrypt), login `admin` |
+| kube-state-metrics | état des objets : réplicas, HPA, redémarrages |
+| node-exporter | CPU / RAM / disque de chaque nœud |
+
+Réglages pour k3d (`monitoring/values.yaml`) : pas d'Alertmanager, cibles etcd / scheduler / controller-manager / kube-proxy désactivées (k3s les regroupe dans un seul binaire), montage du disque de l'hôte désactivé pour node-exporter (les nœuds k3d sont des conteneurs).
+
+Le namespace `monitoring` **n'a pas** le label Pod Security `restricted` : node-exporter a besoin d'accéder aux nœuds. Il est séparé du namespace applicatif, qui reste en `restricted`.
+
+**Dashboard du projet** : *Nextcloud - HPA et ressources* (dossier General). Pods actuels / voulus par le HPA, CPU moyen rapporté au request (ce que regarde le HPA, cible 60 %), CPU et mémoire par pod, redémarrages. Les dashboards Kubernetes fournis par le chart (« Kubernetes / Compute Resources / ... ») sont aussi disponibles.
+
+Démo : ouvrir le dashboard, lancer `kubectl apply -f k8s/load-test.yaml`, et regarder le CPU dépasser 60 % puis les pods passer de 1 à 3.
+
+Épingler la version du chart pour des déploiements reproductibles : `helm list -n monitoring` donne la version installée, à passer ensuite en `MONITORING_CHART_VERSION`.
 
 ## Limites lab -> prod
 
@@ -224,7 +241,8 @@ Toujours tester en **staging** d'abord : Let's Encrypt bloque après 5 échecs p
 | k3d sur une VM : 3 « nœuds » qui sont des conteneurs sur la même machine | Vrais nœuds, plan de contrôle HA (3 control-planes + etcd + VIP) |
 | `local-path` : données sur un seul nœud, non répliquées | Stockage répliqué (Longhorn, Ceph) ; RWX ou S3 pour Nextcloud multi-pods |
 | Pods Nextcloud tous sur le même nœud (contrainte du PVC RWO) | Pods répartis sur plusieurs nœuds |
-| Certificat auto-signé (ou Let's Encrypt via cert-manager) | cert-manager + Let's Encrypt de production |
+| Let's Encrypt en HTTP-01, un seul domaine | DNS-01 (wildcard), surveillance de l'expiration |
+| Prometheus 3 jours, sans alertes | Rétention longue (Thanos, Mimir), Alertmanager branché sur un canal d'astreinte |
 | MariaDB en 1 réplica, pas de sauvegarde | Galera / opérateur MariaDB, sauvegardes |
 | La CI utilise la config admin du cluster | Kubeconfig du compte `deployer` (droits limités), Secrets gérés par un opérateur (External Secrets + Vault) |
 | Mot de passe Redis en variable d'env | Fichier ou ACL Redis |
@@ -249,5 +267,9 @@ kubectl -n nextcloud get events --sort-by=.lastTimestamp | tail -20
 | HPA `<unknown>/60%` | `kubectl top pods -n nextcloud` : metrics-server pas encore prêt (attendre 1 min) |
 | Page « domaine non approuvé » | `NEXTCLOUD_TRUSTED_DOMAINS` n'est lu qu'à l'installation : `kubectl -n nextcloud exec deploy/nextcloud -- php occ config:system:set trusted_domains 1 --value=<domaine>` |
 | CI : `deploy` échoue sur `kubectl get nodes` | L'utilisateur `deploy` n'a pas `~/.kube/config` (voir « Première installation ») |
+| Certificat `READY False`, challenge `pending` avec `502` | La NetworkPolicy `acme-solver-from-ingress` manque |
+| Certificat émis mais navigateur « non sécurisé » | Encore le certificat staging : vérifier l'annotation de l'Ingress, puis `kubectl -n nextcloud delete secret nextcloud-tls` |
+| Grafana sans données | `kubectl -n monitoring get pods` ; dans Grafana, *Connections > Data sources > Prometheus > Test* |
+| node-exporter en `CrashLoopBackOff` | Vérifier `prometheus-node-exporter.hostRootFsMount.enabled: false` dans `monitoring/values.yaml` |
 
 Commandes `occ` : `kubectl -n nextcloud exec deploy/nextcloud -- php occ status`

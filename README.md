@@ -1,8 +1,9 @@
 # M2 Orchestration - Table 3
 
-Nextcloud sur Kubernetes (k3d) : Traefik devant (HTTPS), Nextcloud, MariaDB, Redis.
+Nextcloud sur Kubernetes (k3d) : Traefik devant (HTTPS Let's Encrypt), Nextcloud, MariaDB, Redis. Monitoring Prometheus + Grafana.
 
 En ligne : https://ynov-orchestration-table3.duckdns.org
+Grafana : https://grafana.ynov-orchestration-table3.duckdns.org
 Branche de travail : `Mathias-Nextcloud`
 
 ## Contenu du dépôt
@@ -33,9 +34,9 @@ En temps normal, il suffit de pousser sur `Mathias-Nextcloud` : la CI build l'im
 |---|---|
 | `manifests` | `kubectl kustomize` + validation des schémas (kubeconform), manifests rendus en artefact |
 | `image` | build `image/Dockerfile`, scan Trivy (bloquant sur CRITICAL corrigeables, rapport complet en artefact), push sur ghcr.io |
-| `deploy` | SSH sur la VM, `git pull`, `k8s/deploy.sh` avec l'image du commit, test de `/status.php` |
+| `deploy` | SSH sur la VM, `git pull`, `k8s/deploy.sh` (cert-manager, Nextcloud, monitoring) avec l'image du commit, test de `/status.php` avec certificat valide |
 
-Les mots de passe sont dans les **secrets GitHub** (`DB_ROOT_PASSWORD`, `DB_PASSWORD`, `ADMIN_PASSWORD`, `REDIS_PASSWORD`). Ils ne sont jamais dans le dépôt.
+Les mots de passe sont dans les **secrets GitHub** (`DB_ROOT_PASSWORD`, `DB_PASSWORD`, `ADMIN_PASSWORD`, `REDIS_PASSWORD`, `GRAFANA_ADMIN_PASSWORD`). Ils ne sont jamais dans le dépôt.
 
 ## Serveur Azure
 
@@ -56,6 +57,8 @@ Après un redémarrage de la VM, le cluster k3d redémarre avec Docker. Vérifie
 
 ```bash
 kubectl -n nextcloud get pods,svc,ingress,pvc,hpa         # état général
+kubectl -n nextcloud get certificate                      # certificat Let's Encrypt
+kubectl -n monitoring get pods                            # Prometheus, Grafana
 kubectl -n nextcloud logs -f deploy/nextcloud             # installation, erreurs
 kubectl -n nextcloud get events --sort-by=.lastTimestamp  # ce qui s'est passé récemment
 kubectl -n nextcloud exec deploy/nextcloud -- php occ status

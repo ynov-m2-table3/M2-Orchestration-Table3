@@ -1,0 +1,56 @@
+# kube-prometheus-stack, version allégée pour k3d (installé par k8s/deploy.sh)
+# Le domaine de Grafana (grafana.<NEXTCLOUD_DOMAIN>) est passé par deploy.sh.
+
+# Pas d'alertes en lab
+alertmanager:
+  enabled: false
+
+# k3s regroupe ces composants dans un seul binaire : sans ça, ces cibles restent "down"
+kubeEtcd: {enabled: false}
+kubeControllerManager: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}
+
+prometheus:
+  prometheusSpec:
+    retention: 3d
+    scrapeInterval: 30s            # moins de collecte = moins de CPU (VM burstable)
+    resources:
+      requests: {cpu: 100m, memory: 400Mi}
+      limits: {memory: 1Gi}
+    # métriques gardées après un redémarrage de Prometheus
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: [ReadWriteOnce]
+          resources: {requests: {storage: 5Gi}}
+
+grafana:
+  # mot de passe admin : Secret "grafana-admin" créé par deploy.sh (secret GitHub GRAFANA_ADMIN_PASSWORD)
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  # dashboards en code : tout ConfigMap avec le label grafana_dashboard="1" est chargé
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      searchNamespace: ALL
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 384Mi}
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+    hosts: [grafana.example.invalid]        # remplacé par deploy.sh
+    tls:
+      - secretName: grafana-tls
+        hosts: [grafana.example.invalid]    # remplacé par deploy.sh
+
+# Dans k3d, les "nœuds" sont des conteneurs : le montage de / de l'hôte échoue -> désactivé
+prometheus-node-exporter:
+  hostRootFsMount:
+    enabled: false
