@@ -25,7 +25,7 @@ spec:
         - podSelector:
             matchLabels: {role: load-test}
       ports:
-        - {port: 80, protocol: TCP}
+        - {port: 8080, protocol: TCP}   # port du conteneur (le Service, lui, expose 80)
 ---
 # 3) MariaDB : joignable uniquement par Nextcloud, et aucune sortie (= internal: true)
 apiVersion: networking.k8s.io/v1

@@ -1,7 +1,7 @@
 # Test du HPA : 4 pods qui appellent Nextcloud en boucle (via le Service, dans le cluster).
-#   kubectl apply -f k8s/tests/load-generator.yaml
+#   kubectl apply -f k8s/load-test.yaml
 #   kubectl -n nextcloud get hpa nextcloud -w     (dans un autre terminal)
-#   kubectl delete -f k8s/tests/load-generator.yaml
+#   kubectl delete -f k8s/load-test.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:

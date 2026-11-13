@@ -1,0 +1,3 @@
+# Le contexte de build ne contient que le Dockerfile : on exclut tout le reste par principe
+*
+!Dockerfile

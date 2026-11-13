@@ -52,16 +52,12 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 33        # www-data : on démarre directement en www-data,
-        runAsGroup: 33       # donc plus besoin de chown/su au démarrage
+        runAsGroup: 33       # donc plus besoin de chown/su au démarrage (voir image/Dockerfile)
         fsGroup: 33
         seccompProfile: {type: RuntimeDefault}
-        sysctls:
-          # autorise un utilisateur non-root à écouter sur le port 80 (Apache)
-          # sysctl "safe", limité au réseau du pod
-          - {name: net.ipv4.ip_unprivileged_port_start, value: "0"}
       containers:
         - name: nextcloud
-          image: nextcloud:33-apache
+          image: nextcloud-table3      # nom complet + tag : voir "images" dans kustomization.yaml
           envFrom:
             - configMapRef: {name: nextcloud-config}
           env:
@@ -76,7 +72,7 @@ spec:
               valueFrom:
                 secretKeyRef: {name: nextcloud-secrets, key: redis_password}
           ports:
-            - {name: http, containerPort: 80}
+            - {name: http, containerPort: 8080}   # image du projet : Apache sur 8080
           securityContext:
             allowPrivilegeEscalation: false
             capabilities: {drop: ["ALL"]}   # possible ici car on ne démarre plus en root
@@ -118,3 +114,47 @@ spec:
             items:
               - {key: db_password, path: db_password}
               - {key: admin_password, path: admin_password}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nextcloud
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nextcloud
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60     # % du request CPU (200m) -> scale au-delà de ~120m
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 120   # redescend après 2 min de calme (démo plus rapide)
+---
+# Compose "proxy" (Caddy) -> Ingress, servi par Traefik (inclus dans k3s)
+# Le host est rempli par kustomize depuis config.env (NEXTCLOUD_DOMAIN)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nextcloud
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [PLACEHOLDER]
+      secretName: nextcloud-tls       # créé par deploy.sh (auto-signé, lab)
+  rules:
+    - host: PLACEHOLDER
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nextcloud
+                port: {name: http}

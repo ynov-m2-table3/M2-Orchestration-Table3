@@ -5,30 +5,18 @@ on:
     branches: [Mathias-Nextcloud]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   HOST: ynov-orchestration-table3.duckdns.org
-  APP_DIR: /home/deploy/M2-Orchestration-Table3
+  # modifiables dans Settings > Secrets and variables > Actions > Variables
+  DEPLOY_USER: ${{ vars.DEPLOY_USER || 'deploy' }}
+  APP_DIR: ${{ vars.APP_DIR || '/home/deploy/M2-Orchestration-Table3' }}
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-
-      - name: Build de l'image
-        run: docker build -t nextcloud-proxy:${{ github.sha }} ./proxy
-
-      - name: Scan Trivy
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
-        with:
-          version: v0.69.3
-          image-ref: nextcloud-proxy:${{ github.sha }}
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
-          trivyignores: .trivyignore
-
-  k8s-manifests:
+  # 1) Les manifests Kubernetes sont-ils valides ?
+  manifests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -39,7 +27,7 @@ jobs:
       - name: Validation des schémas (kubeconform)
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.7.0/kubeconform-linux-amd64.tar.gz | tar xz
-          ./kubeconform -strict -summary -kubernetes-version 1.31.0 rendered.yaml k8s/tests/load-generator.yaml
+          ./kubeconform -strict -summary -kubernetes-version 1.31.0 rendered.yaml k8s/load-test.yaml
 
       - name: Manifests rendus (artefact)
         uses: actions/upload-artifact@v4  # TODO : épingler sur un SHA comme les autres actions
@@ -47,10 +35,74 @@ jobs:
           name: k8s-rendered
           path: rendered.yaml
 
+  # 2) Image du projet : build -> scan -> push sur ghcr.io
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      repo: ${{ steps.meta.outputs.repo }}
+      sha: ${{ steps.meta.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Nom et tags
+        id: meta
+        run: |
+          # ghcr.io/<propriétaire du dépôt>/nextcloud-table3 (en minuscules, exigé par ghcr)
+          REPO="ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/nextcloud-table3"
+          VERSION=$(grep -E '^\s*newTag:' k8s/kustomization.yaml | head -1 | awk '{print $2}' | tr -d '"')
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          docker build image/ \
+            --build-arg REVISION=${{ github.sha }} \
+            --build-arg CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -t ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.sha }} \
+            -t ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.version }}
+
+      - name: Scan Trivy (bloquant sur les CRITICAL corrigeables)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          version: v0.69.3
+          image-ref: ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.sha }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
+
+      - name: Rapport Trivy complet (HIGH + CRITICAL, non bloquant)
+        if: always()
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          version: v0.69.3
+          image-ref: ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.sha }}
+          severity: CRITICAL,HIGH
+          format: table
+          output: trivy-report.txt
+          exit-code: "0"
+
+      - name: Rapport Trivy (artefact)
+        if: always()
+        uses: actions/upload-artifact@v4  # TODO : épingler sur un SHA
+        with:
+          name: trivy-report
+          path: trivy-report.txt
+
+      - name: Push sur ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker push ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.sha }}
+          docker push ${{ steps.meta.outputs.repo }}:${{ steps.meta.outputs.version }}
+
+  # 3) Déploiement sur le cluster k3d de la VM
   deploy:
     runs-on: ubuntu-latest
-    needs: [build, k8s-manifests]
-    if: github.event_name == 'workflow_dispatch'
+    needs: [manifests, image]
     steps:
       - name: Connexion SSH
         run: |
@@ -59,13 +111,28 @@ jobs:
           echo "${{ vars.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_ed25519
 
-      - name: Docker installé
-        run: ssh deploy@$HOST "docker --version && docker compose version"
+      - name: Cluster joignable
+        run: ssh "$DEPLOY_USER@$HOST" "kubectl get nodes"
 
       - name: Déploiement
-        run: ssh deploy@$HOST "$APP_DIR/deploy.sh"
-
-      - name: Healthchecks
+        env:
+          DB_ROOT_PASSWORD: ${{ secrets.DB_ROOT_PASSWORD }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          IMAGE_REPO: ${{ needs.image.outputs.repo }}
+          IMAGE_TAG: ${{ needs.image.outputs.sha }}
         run: |
-          ssh deploy@$HOST "docker compose -f $APP_DIR/compose.yaml ps"
-          curl -fsS https://$HOST/status.php
+          # Les mots de passe passent par l'entrée standard de ssh (jamais dans la ligne de commande
+          # ni dans les logs) et vont dans un fichier temporaire, supprimé juste après le déploiement.
+          printf 'DB_ROOT_PASSWORD=%s\nDB_PASSWORD=%s\nADMIN_PASSWORD=%s\nREDIS_PASSWORD=%s\n' \
+            "$DB_ROOT_PASSWORD" "$DB_PASSWORD" "$ADMIN_PASSWORD" "$REDIS_PASSWORD" \
+          | ssh "$DEPLOY_USER@$HOST" "cd $APP_DIR && git pull --ff-only && umask 077 && cat > .env.ci \
+              && ENV_FILE=.env.ci IMAGE_REPO=$IMAGE_REPO IMAGE_TAG=$IMAGE_TAG sh k8s/deploy.sh; \
+              rc=\$?; rm -f .env.ci; exit \$rc"
+
+      - name: Nextcloud répond
+        run: |
+          ssh "$DEPLOY_USER@$HOST" "kubectl -n nextcloud get pods,hpa"
+          # -k tant que le certificat est auto-signé (à retirer avec Let's Encrypt)
+          curl -fsSk "https://$HOST/status.php"

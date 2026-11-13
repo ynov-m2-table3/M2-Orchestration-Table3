@@ -1,7 +1,7 @@
 # Cluster local k3d : 1 server + 2 agents (3 nœuds k3s dans des conteneurs Docker).
 # k3s fournit déjà : Traefik (Ingress), local-path (PVC), metrics-server (HPA),
 # et un contrôleur NetworkPolicy (kube-router).
-# Création : k3d cluster create --config k8s/k3d-cluster.yaml
+# Création : k3d cluster create --config k8s/k3d-cluster.yaml   (voir k8s/README.md)
 apiVersion: k3d.io/v1alpha5
 kind: Simple
 metadata:

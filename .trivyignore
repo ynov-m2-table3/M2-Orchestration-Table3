@@ -1,5 +1,2 @@
-# DoS dans le binaire caddy (Go 1.26.8 / x/net 0.59), corrigé côté Go
-# pas de correctif dans l'image caddy officielle pour l'instant, à retirer quand elle sera mise à jour
-CVE-2026-78667
-CVE-2026-78669
-CVE-2026-97031
+# CVE acceptées après analyse (une par ligne, avec la raison en commentaire).
+# Vide pour l'instant : le scan bloque sur les CRITICAL qui ont un correctif.

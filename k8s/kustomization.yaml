@@ -1,16 +1,13 @@
-# kubectl apply -k k8s/   (après scripts/create-secrets.sh et scripts/create-tls.sh)
+# Appliqué par k8s/deploy.sh (qui crée d'abord les Secrets)
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: nextcloud
 
 resources:
-  - namespace.yaml
-  - rbac.yaml
+  - namespace.yaml      # namespace + comptes de service + RBAC
   - mariadb.yaml
   - redis.yaml
-  - nextcloud.yaml
-  - ingress.yaml
-  - hpa.yaml
+  - nextcloud.yaml      # config, volume, Deployment, Service, HPA, Ingress
   - networkpolicy.yaml
 
 # config.env -> ConfigMap "nextcloud-domain" (le nom reçoit un suffixe de hash :
@@ -30,6 +27,13 @@ replacements:
         fieldPaths:
           - spec.rules.0.host
           - spec.tls.0.hosts.0
+
+# Image du projet (construite par la CI depuis image/Dockerfile, poussée sur ghcr.io).
+# newTag = version déployée par défaut. La CI déploie le tag exact du commit (sha-xxxxxxx).
+images:
+  - name: nextcloud-table3
+    newName: ghcr.io/ynov-m2-table3/nextcloud-table3
+    newTag: "1.0.0"
 
 labels:
   - pairs:
