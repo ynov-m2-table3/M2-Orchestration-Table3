@@ -1,18 +1,23 @@
 #!/bin/sh
-# Installe k3s sur la VM, ou le met à jour si la version change.
-# Relançable sans risque : si c'est déjà la bonne version, il ne fait rien.
+# Installe et configure k3s. Relançable : il ne refait que ce qui a changé.
 set -eu
-export KUBECONFIG="$HOME/.kube/config"
+cd "$(dirname "$0")"
 
 K3S_VERSION=v1.35.5+k3s1
 
-if [ "$(k3s --version 2>/dev/null | awk 'NR==1 {print $3}')" != "$K3S_VERSION" ]; then
-  # --cluster-init : etcd intégré, pour pouvoir ajouter d'autres masters plus tard
-  curl -sfL https://get.k3s.io | sudo env INSTALL_K3S_VERSION="$K3S_VERSION" sh -s - server --cluster-init
+# config de k3s, versionnée dans Git
+if ! sudo cmp -s k3s-config.yaml /etc/rancher/k3s/config.yaml; then
+  sudo install -D -m 600 k3s-config.yaml /etc/rancher/k3s/config.yaml
+  CONFIG_CHANGED=1
 fi
 
-# kubectl sans sudo pour deploy
-mkdir -p ~/.kube
-sudo install -m 600 -o "$(id -un)" /etc/rancher/k3s/k3s.yaml ~/.kube/config
+if [ "$(k3s --version 2>/dev/null | awk 'NR==1 {print $3}')" != "$K3S_VERSION" ]; then
+  # installation ou mise à jour : démarre k3s avec la config ci-dessus
+  curl -sfL https://get.k3s.io | sudo env INSTALL_K3S_VERSION="$K3S_VERSION" sh -
+elif [ -n "${CONFIG_CHANGED:-}" ]; then
+  sudo systemctl restart k3s
+fi
 
-kubectl wait --for=condition=Ready node --all --timeout=180s
+# le nœud met quelques secondes à s'enregistrer
+timeout 180 sh -c 'until kubectl get nodes 2>/dev/null | grep -qw Ready; do sleep 3; done'
+kubectl get nodes
