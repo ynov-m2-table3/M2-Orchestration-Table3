@@ -1,1 +1,4 @@
 # CVE acceptées, une par ligne, avec la raison et quand la retirer
+# mariadb:11.4 : stdlib Go de gosu (crypto/tls). gosu ne fait que changer d'utilisateur
+# au démarrage, il n'utilise jamais TLS : non exploitable. À retirer quand l'image aura un gosu recompilé.
+CVE-2025-68121
