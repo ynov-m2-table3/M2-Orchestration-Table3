@@ -31,7 +31,7 @@ spec:
       initContainers:
         - name: wait-mariadb
           image: mariadb:11.4
-          command: [sh, -c, "until mariadb-admin ping -h mariadb --silent; do echo 'attente de mariadb'; sleep 3; done"]
+          command: [sh, -c, "until mariadb-admin ping -h mariadb --skip-ssl-verify-server-cert --silent; do echo 'attente de mariadb'; sleep 3; done"]
           securityContext:
             runAsNonRoot: true
             runAsUser: 999
