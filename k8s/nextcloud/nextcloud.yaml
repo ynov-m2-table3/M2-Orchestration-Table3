@@ -1,0 +1,134 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nextcloud-html
+  namespace: nextcloud
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate   # volume RWO : l'ancien pod doit s'arrêter avant que le nouveau démarre
+  selector:
+    matchLabels:
+      app: nextcloud
+  template:
+    metadata:
+      labels:
+        app: nextcloud
+    spec:
+      containers:
+        - name: nextcloud
+          image: nextcloud:33-apache
+          env:
+            - name: MYSQL_HOST
+              value: mariadb
+            - name: MYSQL_DATABASE
+              value: nextcloud
+            - name: MYSQL_USER
+              value: nextcloud
+            - name: MYSQL_PASSWORD_FILE
+              value: /run/secrets/db-password
+            - name: NEXTCLOUD_ADMIN_USER
+              value: admin
+            - name: NEXTCLOUD_ADMIN_PASSWORD_FILE
+              value: /run/secrets/admin-password
+            - name: REDIS_HOST
+              value: redis
+            - name: NEXTCLOUD_TRUSTED_DOMAINS
+              value: nextcloud.ynov-table3-k3s.duckdns.org
+            # Traefik est un pod du cluster : réseau des pods de k3s
+            - name: TRUSTED_PROXIES
+              value: 10.42.0.0/16
+            - name: OVERWRITEPROTOCOL
+              value: https
+            - name: OVERWRITECLIURL
+              value: https://nextcloud.ynov-table3-k3s.duckdns.org
+          ports:
+            - containerPort: 80
+          # le Host est obligatoire, sinon Nextcloud refuse (domaine non autorisé)
+          startupProbe:   # 1re install : jusqu'à 10 min
+            httpGet:
+              path: /status.php
+              port: 80
+              httpHeaders:
+                - name: Host
+                  value: nextcloud.ynov-table3-k3s.duckdns.org
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /status.php
+              port: 80
+              httpHeaders:
+                - name: Host
+                  value: nextcloud.ynov-table3-k3s.duckdns.org
+            periodSeconds: 15
+          livenessProbe:
+            httpGet:
+              path: /status.php
+              port: 80
+              httpHeaders:
+                - name: Host
+                  value: nextcloud.ynov-table3-k3s.duckdns.org
+            periodSeconds: 30
+            failureThreshold: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: html
+              mountPath: /var/www/html
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+      volumes:
+        - name: html
+          persistentVolumeClaim:
+            claimName: nextcloud-html
+        - name: secrets
+          secret:
+            secretName: nextcloud
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+spec:
+  selector:
+    app: nextcloud
+  ports:
+    - port: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [nextcloud.ynov-table3-k3s.duckdns.org]
+      secretName: nextcloud-tls
+  rules:
+    - host: nextcloud.ynov-table3-k3s.duckdns.org
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nextcloud
+                port:
+                  number: 80

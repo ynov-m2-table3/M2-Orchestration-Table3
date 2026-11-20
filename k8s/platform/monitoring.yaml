@@ -1,0 +1,38 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: monitoring
+  namespace: kube-system
+spec:
+  repo: https://prometheus-community.github.io/helm-charts
+  chart: kube-prometheus-stack
+  version: 87.19.0
+  targetNamespace: monitoring
+  valuesContent: |
+    # k3s regroupe ces composants dans un seul process, on ne peut pas les scraper à part
+    kubeControllerManager: {enabled: false}
+    kubeScheduler: {enabled: false}
+    kubeProxy: {enabled: false}
+    kubeEtcd: {enabled: false}
+
+    alertmanager:
+      enabled: false   # pas encore d'alertes, on économise la RAM
+
+    prometheus:
+      prometheusSpec:
+        retention: 7d
+
+    grafana:
+      admin:
+        existingSecret: grafana-admin
+        userKey: admin-user
+        passwordKey: admin-password
+      ingress:
+        enabled: true
+        ingressClassName: traefik
+        annotations:
+          cert-manager.io/cluster-issuer: letsencrypt
+        hosts: [grafana.ynov-table3-k3s.duckdns.org]
+        tls:
+          - secretName: grafana-tls
+            hosts: [grafana.ynov-table3-k3s.duckdns.org]
