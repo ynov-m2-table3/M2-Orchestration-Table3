@@ -69,7 +69,7 @@ jobs:
 
       - name: Healthchecks
         run: |
-          ssh deploy@$HOST "kubectl get nodes && kubectl get pods -A"
+          ssh deploy@$HOST "export KUBECONFIG=~/.kube/config; kubectl get nodes && kubectl get pods -A"
           # le certificat peut mettre 1 à 2 min à arriver au premier déploiement
           curl -fsS --retry 10 --retry-delay 15 --retry-all-errors https://nextcloud.$HOST/status.php
           curl -fsS --retry 10 --retry-delay 15 --retry-all-errors -o /dev/null https://grafana.$HOST/api/health

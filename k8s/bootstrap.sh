@@ -2,6 +2,7 @@
 # Installe k3s sur la VM, ou le met à jour si la version change.
 # Relançable sans risque : si c'est déjà la bonne version, il ne fait rien.
 set -eu
+export KUBECONFIG="$HOME/.kube/config"
 
 K3S_VERSION=v1.35.5+k3s1
 

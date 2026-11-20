@@ -1,6 +1,7 @@
 #!/bin/sh
 # Déploie tout ce qui tourne dans le cluster. Lancé par la CI après bootstrap.sh.
 set -eu
+export KUBECONFIG="$HOME/.kube/config"
 cd "$(dirname "$0")"
 
 # Vault tourne sur DockerV2, joint par le réseau privé Azure
