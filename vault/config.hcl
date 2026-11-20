@@ -4,7 +4,7 @@ storage "file" {
 
 listener "tcp" {
   address     = "0.0.0.0:8200"
-  tls_disable = true   # acceptable : Vault n'est joignable que depuis la VM elle-même
+  tls_disable = true   # HTTP : joignable seulement depuis la VM et le réseau privé Azure
 }
 
 api_addr      = "http://127.0.0.1:8200"

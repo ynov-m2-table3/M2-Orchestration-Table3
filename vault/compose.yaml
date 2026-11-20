@@ -5,6 +5,7 @@ services:
     command: server
     ports:
       - "127.0.0.1:8200:8200"
+      - "172.16.1.4:8200:8200"
     environment:
       VAULT_ADDR: http://127.0.0.1:8200
       SKIP_SETCAP: "true"
