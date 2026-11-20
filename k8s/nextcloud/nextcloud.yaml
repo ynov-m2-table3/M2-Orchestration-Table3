@@ -27,6 +27,17 @@ spec:
         app: nextcloud
     spec:
       automountServiceAccountToken: false   # pas besoin de parler à l API Kubernetes
+            # attend que MariaDB réponde avant de lancer Nextcloud (l'équivalent du depends_on du compose)
+      initContainers:
+        - name: wait-mariadb
+          image: mariadb:11.4
+          command: [sh, -c, "until mariadb-admin ping -h mariadb --silent; do echo 'attente de mariadb'; sleep 3; done"]
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
       containers:
         - name: nextcloud
           image: nextcloud:33-apache
