@@ -38,8 +38,15 @@ until kubectl get crd clusterissuers.cert-manager.io >/dev/null 2>&1; do sleep 5
 kubectl -n cert-manager rollout status deploy/cert-manager-webhook --timeout=300s
 kubectl apply -f issuers.yaml
 
+# en cas d'échec, affiche de quoi comprendre dans le log de la CI
+debug() {
+  kubectl -n nextcloud get pods
+  kubectl -n nextcloud get events --sort-by=.lastTimestamp | tail -20
+  exit 1
+}
+
 kubectl apply -f nextcloud/
-kubectl -n nextcloud rollout status statefulset/mariadb --timeout=300s
-kubectl -n nextcloud rollout status deploy/redis --timeout=120s
+kubectl -n nextcloud rollout status statefulset/mariadb --timeout=300s || debug
+kubectl -n nextcloud rollout status deploy/redis --timeout=120s || debug
 # la première installation de Nextcloud est longue
-kubectl -n nextcloud rollout status deploy/nextcloud --timeout=900s
+kubectl -n nextcloud rollout status deploy/nextcloud --timeout=900s || debug

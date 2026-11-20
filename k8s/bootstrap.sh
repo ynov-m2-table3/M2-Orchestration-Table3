@@ -7,7 +7,7 @@ K3S_VERSION=v1.35.5+k3s1
 
 # config de k3s, versionnée dans Git
 if ! sudo cmp -s k3s-config.yaml /etc/rancher/k3s/config.yaml; then
-  sudo install -D -m 600 k3s-config.yaml /etc/rancher/k3s/config.yaml
+  sudo install -D -m 644 k3s-config.yaml /etc/rancher/k3s/config.yaml
   CONFIG_CHANGED=1
 fi
 

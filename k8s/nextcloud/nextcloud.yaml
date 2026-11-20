@@ -26,6 +26,7 @@ spec:
       labels:
         app: nextcloud
     spec:
+      automountServiceAccountToken: false   # pas besoin de parler à l API Kubernetes
       containers:
         - name: nextcloud
           image: nextcloud:33-apache
@@ -37,11 +38,11 @@ spec:
             - name: MYSQL_USER
               value: nextcloud
             - name: MYSQL_PASSWORD_FILE
-              value: /run/secrets/db-password
+              value: /run/secrets/nextcloud/db-password
             - name: NEXTCLOUD_ADMIN_USER
               value: admin
             - name: NEXTCLOUD_ADMIN_PASSWORD_FILE
-              value: /run/secrets/admin-password
+              value: /run/secrets/nextcloud/admin-password
             - name: REDIS_HOST
               value: redis
             - name: NEXTCLOUD_TRUSTED_DOMAINS
@@ -88,7 +89,7 @@ spec:
             - name: html
               mountPath: /var/www/html
             - name: secrets
-              mountPath: /run/secrets
+              mountPath: /run/secrets/nextcloud
               readOnly: true
       volumes:
         - name: html

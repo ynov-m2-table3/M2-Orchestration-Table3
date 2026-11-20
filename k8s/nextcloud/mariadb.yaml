@@ -15,6 +15,7 @@ spec:
       labels:
         app: mariadb
     spec:
+      automountServiceAccountToken: false   # pas besoin de parler à l API Kubernetes
       containers:
         - name: mariadb
           image: mariadb:11.4
@@ -25,9 +26,9 @@ spec:
             - name: MARIADB_USER
               value: nextcloud
             - name: MARIADB_PASSWORD_FILE
-              value: /run/secrets/db-password
+              value: /run/secrets/nextcloud/db-password
             - name: MARIADB_ROOT_PASSWORD_FILE
-              value: /run/secrets/db-root-password
+              value: /run/secrets/nextcloud/db-root-password
           ports:
             - containerPort: 3306
           readinessProbe:
@@ -40,7 +41,7 @@ spec:
             - name: data
               mountPath: /var/lib/mysql
             - name: secrets
-              mountPath: /run/secrets
+              mountPath: /run/secrets/nextcloud
               readOnly: true
       volumes:
         - name: secrets

@@ -14,6 +14,7 @@ spec:
       labels:
         app: redis
     spec:
+      automountServiceAccountToken: false   # pas besoin de parler à l API Kubernetes
       containers:
         - name: redis
           image: redis:7-alpine
