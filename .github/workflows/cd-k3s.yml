@@ -1,0 +1,137 @@
+name: CD k3s - Nextcloud (Mathis Dubaille)
+
+# Déclenché uniquement quand la partie Kubernetes (V2) ou ce workflow change.
+# La V1 (docker-compose sur le VPS) est gérée par ci.yml.
+on:
+  push:
+    branches:
+      - Mathis-Nextcloud
+    paths:
+      - "V2/**"
+      - ".github/workflows/cd-k3s.yml"
+  workflow_dispatch:
+
+# Un seul déploiement à la fois sur le cluster
+concurrency:
+  group: k3s-nextcloud
+  cancel-in-progress: false
+
+env:
+  K8S_NAMESPACE: nextcloud
+  REMOTE_DIR: nextcloud-k8s
+  NEXTCLOUD_HOST: nextcloud.20.199.49.51.nip.io
+
+jobs:
+  deploy-k3s:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 1. Secrets : mêmes mots de passe que la V1 + accès SSH au master k3s
+      - name: Import Secrets from Vault
+        uses: hashicorp/vault-action@v3
+        with:
+          url: ${{ secrets.VAULT_MD_ADDR }}
+          method: token
+          token: ${{ secrets.VAULT_MD_TOKEN }}
+          secrets: |
+            secret/data/SecretTP POSTGRES_PASSWORD | DB_PASSWORD ;
+            secret/data/SecretTP NEXTCLOUD_ADMIN_PASSWORD | ADMIN_PASSWORD ;
+            secret/data/SecretTP K3S_HOST | K3S_HOST ;
+            secret/data/SecretTP K3S_USER | K3S_USER ;
+            secret/data/SecretTP K3S_SSH_KEY | K3S_SSH_KEY
+
+      # 2. DevSecOps : scan des images utilisées par les manifests
+      - name: Scan Nextcloud image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "nextcloud:35-apache"
+          format: "table"
+          exit-code: "0"
+          severity: "CRITICAL,HIGH"
+
+      - name: Scan PostgreSQL image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "postgres:17-alpine"
+          format: "table"
+          exit-code: "0"
+          severity: "CRITICAL,HIGH"
+
+      # 3. Copie des manifests sur le master k3s
+      - name: Copy manifests to k3s master
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ env.K3S_HOST }}
+          username: ${{ env.K3S_USER }}
+          key: ${{ env.K3S_SSH_KEY }}
+          source: "V2/k8s/*"
+          target: ${{ env.REMOTE_DIR }}
+          strip_components: 2
+          rm: true
+
+      # 4. Déploiement : Secret depuis Vault, validation, apply, attente, test
+      - name: Deploy to k3s via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          SECURE_DB_PASS: ${{ env.DB_PASSWORD }}
+          SECURE_ADMIN_PASS: ${{ env.ADMIN_PASSWORD }}
+          NS: ${{ env.K8S_NAMESPACE }}
+          DIR: ${{ env.REMOTE_DIR }}
+          NC_HOST: ${{ env.NEXTCLOUD_HOST }}
+        with:
+          host: ${{ env.K3S_HOST }}
+          username: ${{ env.K3S_USER }}
+          key: ${{ env.K3S_SSH_KEY }}
+          envs: SECURE_DB_PASS,SECURE_ADMIN_PASS,NS,DIR,NC_HOST
+          command_timeout: 20m
+          script: |
+            set -e
+            cd ~/"$DIR"
+
+            echo "=== CD : Vérification du cluster ==="
+            kubectl get nodes -o wide
+
+            echo "=== CD : Namespace ==="
+            kubectl apply -f 00-namespace.yaml
+
+            echo "=== CD : Secret Nextcloud (généré depuis Vault, jamais versionné) ==="
+            kubectl -n "$NS" create secret generic nextcloud-secrets \
+              --from-literal=POSTGRES_DB=nextclouddb \
+              --from-literal=POSTGRES_USER=nextclouduser \
+              --from-literal=POSTGRES_PASSWORD="$SECURE_DB_PASS" \
+              --from-literal=NEXTCLOUD_ADMIN_USER=admin \
+              --from-literal=NEXTCLOUD_ADMIN_PASSWORD="$SECURE_ADMIN_PASS" \
+              --from-literal=NEXTCLOUD_TRUSTED_DOMAINS="localhost $NC_HOST" \
+              --dry-run=client -o yaml | kubectl apply -f -
+
+            echo "=== CD : Validation des manifests (dry-run côté serveur) ==="
+            kubectl apply -k . --dry-run=server
+
+            echo "=== CD : Déploiement ==="
+            kubectl apply -k .
+
+            echo "=== CD : Attente de PostgreSQL ==="
+            kubectl -n "$NS" rollout status statefulset/postgres --timeout=300s
+
+            echo "=== CD : Attente de Nextcloud (1er démarrage = installation, plusieurs minutes) ==="
+            if ! kubectl -n "$NS" rollout status deployment/nextcloud --timeout=900s; then
+              echo "Erreur : Nextcloud ne démarre pas"
+              kubectl -n "$NS" get pods -o wide
+              kubectl -n "$NS" logs deployment/nextcloud --tail=50 || true
+              exit 1
+            fi
+
+            echo "=== CD : État final ==="
+            kubectl -n "$NS" get pods,svc,ingress,pvc -o wide
+
+            echo "=== CD : Healthcheck via Traefik ==="
+            CODE=$(curl -s -o /tmp/status.json -w '%{http_code}' -H "Host: $NC_HOST" http://127.0.0.1/status.php)
+            cat /tmp/status.json; echo
+            if [ "$CODE" != "200" ]; then
+              echo "Erreur : /status.php renvoie HTTP $CODE"
+              exit 1
+            fi
+            echo "Nextcloud est up and running : http://$NC_HOST"

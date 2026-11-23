@@ -136,3 +136,100 @@ Pour tester la stack en local sans la CI/CD :
    ```bash
    docker compose up --build -d
    ```
+
+---
+
+# V2 - Déploiement Nextcloud sur cluster k3s (Azure)
+
+La V2 déploie la même application (Nextcloud + PostgreSQL) sur un cluster **k3s** de 3 VMs Azure, avec un pipeline GitHub Actions dédié (`.github/workflows/cd-k3s.yml`).
+
+## Infrastructure
+
+| VM | Rôle | IP privée | IP publique |
+|---|---|---|---|
+| VM-k3s-1 | Master (control-plane) | 10.10.1.4 | 20.199.49.51 |
+| VM-k3s-2 | Worker | 10.10.1.5 | 20.39.232.35 |
+| VM-k3s-3 | Worker | 10.10.1.6 | 40.66.41.151 |
+
+* **Réseau :** VNet Azure dédié `k3s-vnet` (`10.10.1.0/27`) : les nœuds communiquent uniquement par IP privée (API 6443, Flannel VXLAN 8472/udp, kubelet 10250).
+* **OS :** Debian 13, k3s v1.37.
+
+```mermaid
+graph TD
+    User((🌐 Utilisateurs)) -->|HTTP :80<br/>nextcloud.20.199.49.51.nip.io| TR
+
+    subgraph Azure [VNet Azure k3s-vnet 10.10.1.0/27]
+        subgraph Cluster [Cluster k3s]
+            TR[Traefik Ingress]
+            subgraph NS [Namespace : nextcloud]
+                ING[Ingress nextcloud]
+                SVC[Service nextcloud]
+                APP[Deployment Nextcloud]
+                DBS[Service postgres headless]
+                DB[(StatefulSet PostgreSQL 17)]
+                SEC[[Secret nextcloud-secrets]]
+                PVA[(PVC nextcloud-data 5Gi)]
+                PVD[(PVC db-data 2Gi)]
+            end
+        end
+    end
+
+    TR --> ING --> SVC --> APP
+    APP -->|5432| DBS --> DB
+    SEC -.-> APP
+    SEC -.-> DB
+    APP --- PVA
+    DB --- PVD
+```
+
+## Manifests (`V2/k8s/`)
+
+| Fichier | Contenu |
+|---|---|
+| `00-namespace.yaml` | Namespace `nextcloud` (isolation des ressources) |
+| `10-postgres.yaml` | StatefulSet PostgreSQL + Service headless interne + volume persistant |
+| `20-nextcloud.yaml` | Deployment Nextcloud (stratégie `Recreate`, sondes `/status.php`) + PVC + Service |
+| `30-ingress.yaml` | Ingress Traefik sur `nextcloud.20.199.49.51.nip.io` |
+| `kustomization.yaml` | Point d'entrée : `kubectl apply -k V2/k8s` |
+
+Le Secret `nextcloud-secrets` n'est **jamais versionné** : il est généré par le pipeline à partir de Vault.
+
+## Pipeline CD k3s
+
+Déclenché par un push sur `Mathis-Nextcloud` touchant `V2/**` (ou manuellement via *Run workflow*). La V1 (`ci.yml`) ignore ces chemins.
+
+```mermaid
+graph TD
+    A[Git Push V2/**] --> B[Runner auto-hébergé]
+    B --> C[Import secrets Vault]
+    C --> D[Scan Trivy des images]
+    D --> E[SCP des manifests vers le master k3s]
+    E --> F[Création du Secret Kubernetes]
+    F --> G{kubectl apply --dry-run=server}
+    G -->|Erreur| Z[❌ Arrêt]
+    G -->|OK| H[kubectl apply -k]
+    H --> I{Rollout PostgreSQL + Nextcloud}
+    I -->|Timeout| Z
+    I -->|Ready| J{Healthcheck /status.php via Traefik}
+    J -->|≠ 200| Z
+    J -->|200| K((✅ Déploiement validé))
+```
+
+### Prérequis
+
+1. **Vault** (`secret/SecretTP`) - en plus des clés V1 :
+
+   | Clé | Valeur |
+   |---|---|
+   | `K3S_HOST` | `20.199.49.51` |
+   | `K3S_USER` | `azureuser` |
+   | `K3S_SSH_KEY` | Clé privée SSH des VMs (contenu complet du `.pem`) |
+
+2. **NSG Azure** de `VM-k3s-1` : autoriser le port **80/TCP** entrant pour accéder à Nextcloud.
+
+### Vérification manuelle
+
+```bash
+ssh azureuser@20.199.49.51
+kubectl -n nextcloud get pods,svc,ingress,pvc -o wide
+```

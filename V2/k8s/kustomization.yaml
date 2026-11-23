@@ -1,0 +1,9 @@
+# Point d'entrée : "kubectl apply -k V2/k8s" applique tout dans l'ordre
+# Le Secret "nextcloud-secrets" n'est PAS versionné : il est créé par le pipeline depuis Vault
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - 00-namespace.yaml
+  - 10-postgres.yaml
+  - 20-nextcloud.yaml
+  - 30-ingress.yaml

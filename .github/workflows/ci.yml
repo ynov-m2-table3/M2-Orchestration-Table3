@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - Mathis-Nextcloud
+    paths-ignore:
+      - "V2/**"
+      - ".github/workflows/cd-k3s.yml"
 
 jobs:
   ci-cd-pipeline:

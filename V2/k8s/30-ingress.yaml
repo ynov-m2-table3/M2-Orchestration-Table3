@@ -1,0 +1,21 @@
+# Exposition HTTP via Traefik (Ingress Controller fourni par k3s)
+# nip.io : DNS public gratuit, "nextcloud.20.199.49.51.nip.io" résout vers 20.199.49.51
+# Prérequis : port 80 ouvert dans le NSG de VM-k3s-1
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: nextcloud.20.199.49.51.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nextcloud
+                port:
+                  name: http

@@ -1,0 +1,7 @@
+# Namespace dédié : isole toutes les ressources Nextcloud du reste du cluster
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nextcloud
+  labels:
+    app.kubernetes.io/part-of: nextcloud

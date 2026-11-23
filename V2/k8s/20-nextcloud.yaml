@@ -1,0 +1,105 @@
+# Application Nextcloud
+# - PVC pour /var/www/html (code, config, fichiers utilisateurs)
+# - Deployment en stratégie "Recreate" : le volume est ReadWriteOnce, un seul pod à la fois
+# - Service ClusterIP interne, exposé à l'extérieur uniquement via l'Ingress Traefik
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nextcloud-data
+  namespace: nextcloud
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+  labels:
+    app: nextcloud
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: nextcloud
+  template:
+    metadata:
+      labels:
+        app: nextcloud
+    spec:
+      containers:
+        - name: nextcloud
+          image: nextcloud:35-apache
+          ports:
+            - containerPort: 80
+              name: http
+          env:
+            - name: POSTGRES_HOST
+              value: postgres
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef: { name: nextcloud-secrets, key: POSTGRES_DB }
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef: { name: nextcloud-secrets, key: POSTGRES_USER }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: nextcloud-secrets, key: POSTGRES_PASSWORD }
+            - name: NEXTCLOUD_ADMIN_USER
+              valueFrom:
+                secretKeyRef: { name: nextcloud-secrets, key: NEXTCLOUD_ADMIN_USER }
+            - name: NEXTCLOUD_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: nextcloud-secrets, key: NEXTCLOUD_ADMIN_PASSWORD }
+            - name: NEXTCLOUD_TRUSTED_DOMAINS
+              valueFrom:
+                secretKeyRef: { name: nextcloud-secrets, key: NEXTCLOUD_TRUSTED_DOMAINS }
+            # Nextcloud est derrière Traefik : on fait confiance au réseau des pods k3s
+            - name: TRUSTED_PROXIES
+              value: 10.42.0.0/16
+          # Les sondes envoient Host: localhost (domaine de confiance), sinon Nextcloud répond 400
+          # Premier démarrage = installation (copie des fichiers + init BDD) : peut prendre plusieurs minutes
+          startupProbe:
+            httpGet: { path: /status.php, port: http, httpHeaders: [{ name: Host, value: localhost }] }
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /status.php, port: http, httpHeaders: [{ name: Host, value: localhost }] }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /status.php, port: http, httpHeaders: [{ name: Host, value: localhost }] }
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          volumeMounts:
+            - name: nextcloud-data
+              mountPath: /var/www/html
+      volumes:
+        - name: nextcloud-data
+          persistentVolumeClaim:
+            claimName: nextcloud-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+  labels:
+    app: nextcloud
+spec:
+  selector:
+    app: nextcloud
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
