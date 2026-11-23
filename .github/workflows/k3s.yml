@@ -69,7 +69,7 @@ jobs:
             if [ "$node" != "$HOST" ]; then
               # jeton pour rejoindre le cluster : lu sur k3s-1, écrit sur le nœud, jamais affiché
               ssh deploy@$HOST "sudo cat /var/lib/rancher/k3s/server/token" \
-                | ssh deploy@$node "sudo sh -c 'umask 077; mkdir -p /etc/rancher/k3s; cat > /etc/rancher/k3s/token'"
+                | ssh deploy@$node "sudo sh -c 'mkdir -p /etc/rancher/k3s; umask 077; cat > /etc/rancher/k3s/token'"
             fi
             ssh deploy@$node "sh k8s/bootstrap.sh"
           done
