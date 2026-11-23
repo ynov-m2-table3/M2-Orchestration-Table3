@@ -30,6 +30,10 @@ else
   echo "token-file: /etc/rancher/k3s/token" >> "$CONFIG"   # déposé par la CI
 fi
 
+# région du nœud, lue auprès d'Azure : sert à répartir les pods par région
+REGION=$(curl -sf -H Metadata:true "http://169.254.169.254/metadata/instance/compute/location?api-version=2021-02-01&format=text")
+printf 'node-label:\n  - topology.kubernetes.io/region=%s\n' "$REGION" >> "$CONFIG"
+
 if ! sudo cmp -s "$CONFIG" /etc/rancher/k3s/config.yaml; then
   sudo install -D -m 644 "$CONFIG" /etc/rancher/k3s/config.yaml
   CONFIG_CHANGED=1

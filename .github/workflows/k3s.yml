@@ -9,7 +9,7 @@ env:
   HOST: ynov-table3-k3s.duckdns.org   # k3s-1 : le site, et là où on lance deploy.sh
   # les nœuds du cluster, k3s-1 en premier (c'est lui qui crée le cluster) :
   # k3s-1 (Norvège), k3s-2 (Suède), k3s-3 (Pologne), DockerV2 (Norvège, worker)
-  NODES: ynov-table3-k3s.duckdns.org 4.223.153.34 74.248.132.169 ynov-orchestration-table3.duckdns.org
+  NODES: ynov-table3-k3s.duckdns.org 4.223.153.34 74.248.132.169 ynov-orchestration-table3.duckdns.org 20.215.56.199
 
 jobs:
   scan:

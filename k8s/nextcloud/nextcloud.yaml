@@ -1,3 +1,13 @@
+# Affiche le nom du pod dans chaque réponse (en-tête X-Pod) : preuve de la répartition de charge
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apache-pod-header
+  namespace: nextcloud
+data:
+  pod-header.conf: |
+    Header always set X-Pod "${HOSTNAME}"
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -5,7 +15,8 @@ metadata:
   namespace: nextcloud
 spec:
   storageClassName: longhorn
-  accessModes: [ReadWriteOnce]
+  # RWX : le même volume est monté par tous les pods Nextcloud, sur des nœuds différents
+  accessModes: [ReadWriteMany]
   resources:
     requests:
       storage: 10Gi
@@ -16,9 +27,7 @@ metadata:
   name: nextcloud
   namespace: nextcloud
 spec:
-  replicas: 1
-  strategy:
-    type: Recreate   # volume RWO : l'ancien pod doit s'arrêter avant que le nouveau démarre
+  replicas: 3   # Traefik répartit les requêtes entre les 3
   selector:
     matchLabels:
       app: nextcloud
@@ -44,6 +53,14 @@ spec:
                   - key: topology.kubernetes.io/region
                     operator: In
                     values: [norwayeast]
+      # un pod par nœud autant que possible
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: nextcloud
       # si le nœud ne répond plus, le pod part ailleurs au bout de 30 s (5 min par défaut)
       tolerations:
         - {key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 30}
@@ -123,6 +140,9 @@ spec:
             - name: secrets
               mountPath: /run/secrets/nextcloud
               readOnly: true
+            - name: pod-header
+              mountPath: /etc/apache2/conf-enabled/pod-header.conf
+              subPath: pod-header.conf
       volumes:
         - name: html
           persistentVolumeClaim:
@@ -130,6 +150,9 @@ spec:
         - name: secrets
           secret:
             secretName: nextcloud
+        - name: pod-header
+          configMap:
+            name: apache-pod-header
 ---
 apiVersion: v1
 kind: Service
