@@ -27,7 +27,7 @@ metadata:
   name: nextcloud
   namespace: nextcloud
 spec:
-  replicas: 3   # Traefik répartit les requêtes entre les 3
+  # pas de "replicas" ici : deploy.sh installe avec 1 pod, puis passe à 3
   selector:
     matchLabels:
       app: nextcloud
@@ -53,11 +53,11 @@ spec:
                   - key: topology.kubernetes.io/region
                     operator: In
                     values: [norwayeast]
-      # un pod par nœud autant que possible
+      # un pod par nœud, jamais deux sur le même
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
           labelSelector:
             matchLabels:
               app: nextcloud
@@ -106,7 +106,7 @@ spec:
           ports:
             - containerPort: 80
           # le Host est obligatoire, sinon Nextcloud refuse (domaine non autorisé)
-          startupProbe:   # 1re install : jusqu'à 10 min
+          startupProbe:   # 1re install : copie sur le volume partagé : jusqu'à 30 min
             httpGet:
               path: /status.php
               port: 80
@@ -114,7 +114,7 @@ spec:
                 - name: Host
                   value: nextcloud.ynov-table3-k3s.duckdns.org
             periodSeconds: 10
-            failureThreshold: 60
+            failureThreshold: 180
           readinessProbe:
             httpGet:
               path: /status.php

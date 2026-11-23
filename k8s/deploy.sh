@@ -61,5 +61,9 @@ debug() {
 kubectl apply -f nextcloud/
 kubectl -n nextcloud rollout status statefulset/mariadb --timeout=300s || debug
 kubectl -n nextcloud rollout status deploy/redis --timeout=120s || debug
-# la première installation de Nextcloud est longue
+# 1re installation avec un seul pod (copie des fichiers sur le volume partagé, longue),
+# puis 3 pods répartis : jamais plusieurs installations en même temps
+kubectl -n nextcloud rollout status deploy/nextcloud --timeout=1800s || debug
+kubectl -n nextcloud scale deploy/nextcloud --replicas=3
 kubectl -n nextcloud rollout status deploy/nextcloud --timeout=900s || debug
+
