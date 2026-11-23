@@ -4,6 +4,7 @@ metadata:
   name: nextcloud-html
   namespace: nextcloud
 spec:
+  storageClassName: longhorn
   accessModes: [ReadWriteOnce]
   resources:
     requests:
@@ -27,7 +28,27 @@ spec:
         app: nextcloud
     spec:
       automountServiceAccountToken: false   # pas besoin de parler à l API Kubernetes
-            # attend que MariaDB réponde avant de lancer Nextcloud (l'équivalent du depends_on du compose)
+      # Norvège de préférence, Suède en secours (là où sont les copies Longhorn), jamais la Pologne
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: topology.kubernetes.io/region
+                    operator: In
+                    values: [norwayeast, swedencentral]
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: topology.kubernetes.io/region
+                    operator: In
+                    values: [norwayeast]
+      # si le nœud ne répond plus, le pod part ailleurs au bout de 30 s (5 min par défaut)
+      tolerations:
+        - {key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute, tolerationSeconds: 30}
+        - {key: node.kubernetes.io/not-ready, operator: Exists, effect: NoExecute, tolerationSeconds: 30}
+      # attend que MariaDB réponde avant de lancer Nextcloud (l'équivalent du depends_on du compose)
       initContainers:
         - name: wait-mariadb
           image: mariadb:11.4

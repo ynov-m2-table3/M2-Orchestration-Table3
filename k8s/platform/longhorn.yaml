@@ -1,0 +1,31 @@
+# Longhorn : stockage répliqué. Chaque volume existe en 3 copies :
+# k3s-1 et DockerV2 (Norvège), k3s-2 (Suède). k3s-3 (Pologne) ne stocke rien, il sert au quorum.
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: longhorn
+  namespace: kube-system
+spec:
+  repo: https://charts.longhorn.io
+  chart: longhorn
+  version: 1.12.2
+  targetNamespace: longhorn-system
+  valuesContent: |
+    persistence:
+      defaultClass: false            # on garde local-path par défaut, nos volumes demandent "longhorn" explicitement
+      defaultClassReplicaCount: 3    # 3 copies de chaque volume, sur 3 nœuds différents
+
+    defaultSettings:
+      # disques Longhorn seulement sur les nœuds étiquetés (k3s-1, DockerV2, k3s-2 : voir deploy.sh)
+      createDefaultDiskLabeledNodes: true
+      # si un nœud tombe, Longhorn supprime ses pods pour qu'ils redémarrent ailleurs
+      nodeDownPodDeletionPolicy: delete-both-statefulset-and-deployment-pod
+
+    # 1 seul exemplaire des composants annexes (3 par défaut), pour économiser la RAM
+    longhornUI:
+      replicas: 1
+    csi:
+      attacherReplicaCount: 1
+      provisionerReplicaCount: 1
+      resizerReplicaCount: 1
+      snapshotterReplicaCount: 1

@@ -6,7 +6,10 @@ on:
   workflow_dispatch:
 
 env:
-  HOST: ynov-table3-k3s.duckdns.org
+  HOST: ynov-table3-k3s.duckdns.org   # k3s-1 : le site, et là où on lance deploy.sh
+  # les nœuds du cluster, k3s-1 en premier (c'est lui qui crée le cluster) :
+  # k3s-1 (Norvège), k3s-2 (Suède), k3s-3 (Pologne), DockerV2 (Norvège, worker)
+  NODES: ynov-table3-k3s.duckdns.org 4.223.153.34 74.248.132.169 ynov-orchestration-table3.duckdns.org
 
 jobs:
   scan:
@@ -58,18 +61,25 @@ jobs:
           echo "${{ vars.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_ed25519
 
-      - name: Copie des manifests
-        run: rsync -a --delete k8s/ deploy@$HOST:k8s/
-
-      - name: Installation de k3s
-        run: ssh deploy@$HOST "sh k8s/bootstrap.sh"
+      - name: Installation de k3s sur chaque nœud
+        run: |
+          for node in $NODES; do
+            echo "== $node"
+            rsync -a --delete k8s/ deploy@$node:k8s/
+            if [ "$node" != "$HOST" ]; then
+              # jeton pour rejoindre le cluster : lu sur k3s-1, écrit sur le nœud, jamais affiché
+              ssh deploy@$HOST "sudo cat /var/lib/rancher/k3s/server/token" \
+                | ssh deploy@$node "sudo sh -c 'umask 077; mkdir -p /etc/rancher/k3s; cat > /etc/rancher/k3s/token'"
+            fi
+            ssh deploy@$node "sh k8s/bootstrap.sh"
+          done
 
       - name: Déploiement
         run: ssh deploy@$HOST "sh k8s/deploy.sh"
 
       - name: Healthchecks
         run: |
-          ssh deploy@$HOST "export KUBECONFIG=~/.kube/config; kubectl get nodes && kubectl get pods -A"
+          ssh deploy@$HOST "kubectl get nodes && kubectl get pods -A"
           # le certificat peut mettre 1 à 2 min à arriver au premier déploiement
           curl -fsS --retry 10 --retry-delay 15 --retry-all-errors https://nextcloud.$HOST/status.php
           curl -fsS --retry 10 --retry-delay 15 --retry-all-errors -o /dev/null https://grafana.$HOST/api/health

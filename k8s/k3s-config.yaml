@@ -1,4 +1,4 @@
-# Configuration de k3s, copiée dans /etc/rancher/k3s/config.yaml par bootstrap.sh
-cluster-init: true              # etcd intégré, pour ajouter d'autres masters plus tard
+# Configuration commune à tous les nœuds, copiée dans /etc/rancher/k3s/config.yaml par bootstrap.sh
+# (bootstrap.sh ajoute à la fin : cluster-init sur k3s-1, server + token sur les autres)
 write-kubeconfig-mode: "0640"   # kubeconfig lisible par root et par le groupe ci-dessous
 write-kubeconfig-group: deploy
