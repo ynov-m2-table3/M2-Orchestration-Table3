@@ -91,6 +91,16 @@ data:
                   ]
                 }
               }
+            },
+            {
+              "id": "sortBy",
+              "options": {
+                "sort": [
+                  {
+                    "field": "node"
+                  }
+                ]
+              }
             }
           ]
         },
@@ -144,7 +154,10 @@ data:
             "overrides": []
           },
           "options": {
-            "showValue": "never"
+            "showValue": "never",
+            "legend": {
+              "showLegend": false
+            }
           },
           "targets": [
             {
@@ -181,7 +194,38 @@ data:
                 "lineInterpolation": "stepAfter"
               }
             },
-            "overrides": []
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Running"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "green"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Pending"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "orange"
+                    }
+                  }
+                ]
+              }
+            ]
           },
           "targets": [
             {
@@ -189,7 +233,7 @@ data:
                 "type": "prometheus",
                 "uid": "prometheus"
               },
-              "expr": "sum by (phase) (kube_pod_status_phase{namespace=\"nextcloud\", pod=~\"nextcloud-.*\"})",
+              "expr": "sum by (phase) (kube_pod_status_phase{namespace=\"nextcloud\", pod=~\"nextcloud-.*\", phase=~\"Running|Pending\"})",
               "legendFormat": "{{phase}}",
               "refId": "A"
             }
