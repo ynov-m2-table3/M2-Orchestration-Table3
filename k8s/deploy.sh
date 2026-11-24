@@ -18,15 +18,10 @@ GRAFANA_PASSWORD=$(vault_get grafana_password)
 
 kubectl apply -f namespaces.yaml
 
-# région de chaque nœud, et où Longhorn a le droit de stocker des copies
-label() {
-  node=$1; shift
-  kubectl get node "$node" >/dev/null 2>&1 && kubectl label node "$node" "$@" --overwrite >/dev/null || true
-}
-label k3s-1    topology.kubernetes.io/region=norwayeast    node.longhorn.io/create-default-disk=true
-label dockerv2 topology.kubernetes.io/region=norwayeast    node.longhorn.io/create-default-disk=true
-label k3s-2    topology.kubernetes.io/region=swedencentral node.longhorn.io/create-default-disk=true
-label k3s-3    topology.kubernetes.io/region=polandcentral
+# où Longhorn a le droit de stocker des copies (la région, elle, est posée par bootstrap.sh)
+for node in k3s-1 dockerv2 k3s-2; do
+  kubectl label node "$node" node.longhorn.io/create-default-disk=true --overwrite >/dev/null
+done
 
 kubectl -n nextcloud create secret generic nextcloud \
   --from-literal=db-password="$DB_PASSWORD" \
@@ -66,4 +61,3 @@ kubectl -n nextcloud rollout status deploy/redis --timeout=120s || debug
 kubectl -n nextcloud rollout status deploy/nextcloud --timeout=1800s || debug
 kubectl -n nextcloud scale deploy/nextcloud --replicas=3
 kubectl -n nextcloud rollout status deploy/nextcloud --timeout=900s || debug
-

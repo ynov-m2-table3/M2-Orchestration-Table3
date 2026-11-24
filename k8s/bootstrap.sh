@@ -31,7 +31,8 @@ else
 fi
 
 # région du nœud, lue auprès d'Azure : sert à répartir les pods par région
-REGION=$(curl -sf -H Metadata:true "http://169.254.169.254/metadata/instance/compute/location?api-version=2021-02-01&format=text")
+# Azure peut répondre "NorwayEast" ou "norwayeast" : on met tout en minuscules
+REGION=$(curl -sf -H Metadata:true "http://169.254.169.254/metadata/instance/compute/location?api-version=2021-02-01&format=text" | tr 'A-Z' 'a-z')
 printf 'node-label:\n  - topology.kubernetes.io/region=%s\n' "$REGION" >> "$CONFIG"
 
 if ! sudo cmp -s "$CONFIG" /etc/rancher/k3s/config.yaml; then

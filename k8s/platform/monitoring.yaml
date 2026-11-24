@@ -15,14 +15,30 @@ spec:
     kubeProxy: {enabled: false}
     kubeEtcd: {enabled: false}
 
+    # La supervision tourne de préférence sur worker-pl (Pologne), qui ne porte pas Nextcloud.
+    # "preferred" : si worker-pl tombe, les pods repartent sur un autre nœud.
+    prometheusOperator:
+      affinity: &worker-pl
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - {key: kubernetes.io/hostname, operator: In, values: [worker-pl]}
+
+    kube-state-metrics:
+      affinity: *worker-pl
+
     alertmanager:
       enabled: false   # pas encore d'alertes, on économise la RAM
 
     prometheus:
       prometheusSpec:
         retention: 7d
+        affinity: *worker-pl
 
     grafana:
+      affinity: *worker-pl
       admin:
         existingSecret: grafana-admin
         userKey: admin-user
