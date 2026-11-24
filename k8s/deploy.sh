@@ -10,6 +10,12 @@ vault_get() {
     | jq -er ".data.data.$1"
 }
 
+# après un redémarrage de DockerV2, Vault est scellé : il faut le déverrouiller à la main
+if curl -s "$VAULT_ADDR/v1/sys/seal-status" | jq -e .sealed >/dev/null; then
+  echo "Vault est scellé : lancer 'docker exec -it vault vault operator unseal' sur DockerV2" >&2
+  exit 1
+fi
+
 # lus d'abord dans des variables : si Vault ne répond pas, le script s'arrête ici
 DB_PASSWORD=$(vault_get db_password)
 DB_ROOT_PASSWORD=$(vault_get db_root_password)
